@@ -1,0 +1,26 @@
+{
+  "name": "cumeet-server",
+  "version": "1.0.0",
+  "description": "Cumeet video meeting application backend",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^7.6.0",
+    "nodemailer": "^7.0.5",
+    "simple-peer": "^9.11.1",
+    "socket.io": "^4.8.1",
+    "mediasoup": "^3.11.0",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
