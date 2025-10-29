@@ -61,7 +61,7 @@ A comprehensive video meeting application built with React.js frontend and Node.
 
 1. **Clone the repository**
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/your-username/cumeet.git
    cd cumeet
    ```
 
@@ -87,6 +87,9 @@ A comprehensive video meeting application built with React.js frontend and Node.
    # MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/cumeet
    
    JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
+   
+   # IMPORTANT: Do not commit this .env file to your repository.
+   # Make sure your .gitignore file includes 'server/.env'
    PORT=5000
    FRONTEND_URL=http://localhost:5173
    ```
