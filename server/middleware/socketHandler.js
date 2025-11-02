@@ -2,7 +2,6 @@ const mediasoup = require('mediasoup');
 const { mediaCodecs } = require('../sfu/mediaCodecs');
 
 const rooms = new Map();
-const SFU_THRESHOLD = 4; // The room migrates to SFU at 4 participants
 
 /**
  * Manages all socket.io events for the application.
@@ -44,12 +43,6 @@ const socketHandler = (io, worker) => {
                     console.log(`Room ${currentRoomId} is empty, closing router.`);
                     router.close();
                     rooms.delete(currentRoomId);
-                } else {
-                    // Optional: Check for downgrading back to P2P
-                    if (participants.size < SFU_THRESHOLD) {
-                        console.log(`Room ${currentRoomId} participant count (${participants.size}) is below threshold. Emitting migrate-to-p2p.`);
-                        io.to(currentRoomId).emit('migrate-to-p2p');
-                    }
                 }
             }
         };
@@ -70,26 +63,20 @@ const socketHandler = (io, worker) => {
             // Prepare user data
             const currentUser = { socketId: socket.id, userId, userName, transports: new Map(), producers: new Map(), consumers: new Map() };
 
-            // Send existing users to the new user
-            const existingUsers = [...participants];
-            socket.emit('existing-users', existingUsers);
-            socket.emit('sfu-existing-producers', existingUsers.flatMap(p => [...p.producers.values()]));
+            // Send existing producers to the new user
+            const producers = [...participants].flatMap(p => [...p.producers.values()]);
+            socket.emit('existing-producers', producers);
 
             // Add new user and notify others
             participants.add(currentUser);
             socket.join(roomId);
-            socket.to(roomId).emit('user-joined', currentUser);
+            socket.to(roomId).emit('user-joined', {
+                userId,
+                userName,
+                socketId: socket.id
+            });
 
             console.log(`User ${userName} (${userId}) joined room ${roomId}. New size: ${participants.size}`);
-
-            // --- CORE MIGRATION LOGIC ---
-            if (participants.size >= SFU_THRESHOLD) {
-                console.log(`Room ${roomId} reached threshold (${participants.size}). Emitting migrate-to-sfu.`);
-                io.to(roomId).emit('migrate-to-sfu');
-            } else {
-                console.log(`Room ${roomId} is in P2P mode.`);
-                io.to(roomId).emit('migrate-to-p2p');
-            }
         });
 
         // --- SFU Specific Events ---
@@ -198,14 +185,6 @@ const socketHandler = (io, worker) => {
                 console.error('consume failed', error);
                 return callback({ error: error.message });
             }
-        });
-
-        socket.on('signal', ({ targetSocketId, signal, userId }) => {
-            io.to(targetSocketId).emit('signal', {
-                signal,
-                fromSocketId: socket.id,
-                fromUserId: userId,
-            });
         });
 
         socket.on('disconnect', () => {
