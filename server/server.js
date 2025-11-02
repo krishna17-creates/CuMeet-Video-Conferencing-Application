@@ -15,15 +15,28 @@ dotenv.config();
 
 const app = express();
 const server = http.createServer(app);
+
+// --- NEW: Define allowed origins in one place ---
+const allowedOrigins = [
+  process.env.FRONTEND_URL || "http://localhost:5173",
+  // Add any other domains you trust here
+];
+
+const corsOptions = {
+  origin: allowedOrigins,
+  methods: ["GET", "POST"]
+};
+
+// --- UPDATED: Use specific CORS for Socket.IO ---
 const io = socketIo(server, {
-  cors: {
-    origin: process.env.FRONTEND_URL || "http://localhost:5173",
-    methods: ["GET", "POST"]
-  }
+  cors: corsOptions
 });
 
-// Middleware
-app.use(cors());
+// --- Middleware ---
+
+// --- UPDATED: Use specific CORS for Express (HTTP) routes ---
+// This makes your API routes as secure as your socket routes
+app.use(cors(corsOptions)); 
 app.use(express.json());
 
 // Connect to MongoDB
