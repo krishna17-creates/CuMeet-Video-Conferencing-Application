@@ -63,7 +63,10 @@ const socketHandler = (io, worker) => {
             // Prepare user data
             const currentUser = { socketId: socket.id, userId, userName, transports: new Map(), producers: new Map(), consumers: new Map() };
 
-            // Send existing producers to the new user
+            // Send existing users and producers to the new user
+            const existingUsers = [...participants].map(p => ({ socketId: p.socketId, userId: p.userId, userName: p.userName }));
+            socket.emit('existing-users', existingUsers);
+
             const producers = [...participants].flatMap(p => [...p.producers.values()]);
             socket.emit('existing-producers', producers);
 
@@ -190,6 +193,14 @@ const socketHandler = (io, worker) => {
         socket.on('disconnect', () => {
             console.log(`Socket disconnected: ${socket.id}`);
             leaveRoom();
+        });
+
+        // --- P2P signaling relay ---
+        // Forward 'signal' messages between peers to support simple-peer negotiation
+        socket.on('signal', ({ targetSocketId, signal, userId }) => {
+            if (!targetSocketId) return;
+            // Send the signal to the target socket
+            io.to(targetSocketId).emit('signal', { signal, fromSocketId: socket.id, fromUserId: userId });
         });
     });
 };
