@@ -17,21 +17,52 @@ const app = express();
 const server = http.createServer(app);
 
 // --- NEW: Define allowed origins in one place ---
-const allowedOrigins = [
-  "http://localhost:5173",      // Your local dev environment
-  process.env.FRONTEND_URL    // Your production frontend (from .env)
-].filter(Boolean); // This filters out 'undefined' if FRONTEND_URL is not set
+const rawAllowedOrigins = [
+  'http://localhost:5173', // local dev
+  process.env.FRONTEND_URL // production frontend (from env)
+].filter(Boolean);
 
+// Normalize allowed origins (remove trailing slashes)
+const allowedOrigins = rawAllowedOrigins.map(o => o.replace(/\/+$/,'').toLowerCase());
+
+// CORS options: use a function to validate origin so we can normalize incoming origin
 const corsOptions = {
- origin: allowedOrigins,
-  // 1. ADD ALL METHODS YOU WILL USE + "OPTIONS"
- methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"], 
-  // 2. ADD HEADERS YOU NEED
-  allowedHeaders: ["Content-Type", "Authorization"] 
+  origin: (origin, callback) => {
+    // Log incoming origin for easier debugging in Render logs
+    // Note: origin will be undefined for same-origin requests or some server-to-server calls
+    console.log('[CORS] Incoming origin:', origin);
+
+    if (!origin) {
+      // Allow non-browser or same-origin requests (no origin header)
+      return callback(null, true);
+    }
+
+    const normalized = origin.replace(/\/+$/,'').toLowerCase();
+    if (allowedOrigins.includes(normalized)) {
+      return callback(null, true);
+    }
+
+    console.warn('[CORS] Rejected origin:', origin, 'Normalized:', normalized, 'Allowed list:', allowedOrigins);
+    return callback(new Error('Not allowed by CORS'));
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true // allow cookies/credentials if needed
 };
+
 // --- UPDATED: Use specific CORS for Socket.IO ---
 const io = socketIo(server, {
-  cors: corsOptions
+  cors: {
+    origin: (origin, callback) => {
+      // socket.io passes origin similarly; reuse logic
+      const normalized = (origin || '').replace(/\/+$/,'').toLowerCase();
+      if (!origin || allowedOrigins.includes(normalized)) return callback(null, true);
+      console.warn('[Socket.IO CORS] Rejected origin:', origin);
+      return callback('Not allowed by CORS');
+    },
+    methods: ['GET','POST'],
+    credentials: true
+  }
 });
 
 // --- Middleware ---
