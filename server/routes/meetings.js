@@ -7,6 +7,9 @@ const nodemailer = require('nodemailer');
 const router = express.Router();
 
 // Email transporter setup
+// You can disable outgoing emails by setting DISABLE_EMAILS=true in environment variables.
+const EMAILS_DISABLED = process.env.DISABLE_EMAILS === 'true';
+
 const createTransporter = () => {
   return nodemailer.createTransport({
     host: process.env.EMAIL_HOST || 'smtp.gmail.com',
@@ -21,6 +24,11 @@ const createTransporter = () => {
 
 // Send meeting invitation email
 const sendMeetingInvitation = async (meeting, participantEmails, hostName) => {
+  if (EMAILS_DISABLED) {
+    console.log('Email sending disabled via DISABLE_EMAILS env var; skipping invitations');
+    return;
+  }
+
   if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
     console.log('Email credentials not configured, skipping email notifications');
     return;
