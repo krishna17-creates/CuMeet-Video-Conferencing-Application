@@ -28,7 +28,7 @@ import {
   getDay,
   parseISO
 } from 'date-fns';
-import '../styles/Dashboard.css'; // Import the new CSS file
+import '../styles/dashboard.css'; // Import the new CSS file (lowercase filename)
 
 // --- New Mini-Calendar Component ---
 const CalendarWidget = ({ meetings }) => {
