@@ -128,7 +128,8 @@ const MeetingRoom = () => {
   const initializeSocket = useCallback(() => {
     // When served via the Vite proxy, we can use a relative path.
     // The `path` option is important for the proxy to work correctly.
-    socketRef.current = io({
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || "";
+    socketRef.current = io(backendUrl, {
       transports: ['websocket', 'polling'],
       path: '/socket.io'
     });

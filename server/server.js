@@ -18,15 +18,17 @@ const server = http.createServer(app);
 
 // --- NEW: Define allowed origins in one place ---
 const allowedOrigins = [
-  process.env.FRONTEND_URL || "http://localhost:5173",
-  // Add any other domains you trust here
-];
+  "http://localhost:5173",      // Your local dev environment
+  process.env.FRONTEND_URL    // Your production frontend (from .env)
+].filter(Boolean); // This filters out 'undefined' if FRONTEND_URL is not set
 
 const corsOptions = {
-  origin: allowedOrigins,
-  methods: ["GET", "POST"]
+ origin: allowedOrigins,
+  // 1. ADD ALL METHODS YOU WILL USE + "OPTIONS"
+ methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"], 
+  // 2. ADD HEADERS YOU NEED
+  allowedHeaders: ["Content-Type", "Authorization"] 
 };
-
 // --- UPDATED: Use specific CORS for Socket.IO ---
 const io = socketIo(server, {
   cors: corsOptions
