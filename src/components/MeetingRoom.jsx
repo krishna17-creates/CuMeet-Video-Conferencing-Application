@@ -146,6 +146,18 @@ const MeetingRoom = () => {
       });
     });
 
+    // Server acknowledgement that join processing completed
+    socketRef.current.on('joined', ({ roomId: rId, socketId }) => {
+      console.log('Server acknowledged join for room:', rId, 'socketId:', socketId);
+      // If media isn't initialized yet, initialize it; otherwise clear loading
+      if (!localStreamRef.current) {
+        initializeMedia();
+      } else {
+        setLoading(false);
+        setConnectionStatus('Connected');
+      }
+    });
+
     socketRef.current.on('connect_error', (error) => {
       console.error('Socket connection error:', error);
       setConnectionStatus('Connection failed');

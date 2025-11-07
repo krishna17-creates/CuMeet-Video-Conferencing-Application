@@ -79,6 +79,9 @@ const socketHandler = (io, worker) => {
                 socketId: socket.id
             });
 
+            // Inform the joining client that the server has finished join processing
+            socket.emit('joined', { roomId, socketId: socket.id });
+
             console.log(`User ${userName} (${userId}) joined room ${roomId}. New size: ${participants.size}`);
         });
 
