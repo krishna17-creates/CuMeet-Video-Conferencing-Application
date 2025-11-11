@@ -1,20 +1,64 @@
+// --- CRITICAL: Load environment variables from .env file FIRST ---
+// This ensures that all other modules see the environment variables when they are imported.
+const dotenv = require('dotenv');
+const path = require('path');
+const _envResult = dotenv.config({ path: path.resolve(__dirname, './.env') });
+
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const dotenv = require('dotenv');
 const http = require('http');
 const socketIo = require('socket.io');
 const mediasoup = require('mediasoup');
 
-// Import routes
+// NOTE: route imports are loaded after dotenv configuration below so that
+// route modules see process.env values when they execute at module load time.
+// (We import them later, below the dotenv.config() section.)
+
+// _envResult = { parsed, error }
+console.log('[Env] process.cwd() =', process.cwd());
+if (_envResult.error) {
+  console.warn('[Env] dotenv.config() error:', _envResult.error.message);
+} else {
+  const parsedKeys = Object.keys(_envResult.parsed || {});
+  console.log('[Env] dotenv loaded, keys count =', parsedKeys.length);
+  // --- FIX: Add MONGO_URI to the environment variable check ---
+  console.log('[Env] .env parsed contains MONGO_URI=', parsedKeys.includes('MONGO_URI'), 'SENDGRID_API_KEY=', parsedKeys.includes('SENDGRID_API_KEY'));
+}
+// Also show current runtime process.env presence for the same keys (may come from host env)
+console.log('[Env] process.env presence - MONGO_URI=', !!process.env.MONGO_URI, 'SENDGRID_API_KEY=', !!process.env.SENDGRID_API_KEY);
+
+
+// Import routes after dotenv has loaded so they see env vars during module load
 const authRoutes = require('./routes/auth');
 const meetingRoutes = require('./routes/meetings');
 const socketHandler = require('./middleware/socketHandler');
 
-dotenv.config();
-
 const app = express();
+
+// --- CRITICAL: Add a global request logger at the VERY TOP ---
+// This will run for EVERY request, before CORS or anything else.
+app.use((req, res, next) => {
+  try {
+    console.log(`[SERVER] Request Received: ${req.method} ${req.originalUrl}`);
+  } catch (e) {
+    // ignore logging errors
+  }
+  next();
+});
 const server = http.createServer(app);
+
+// Global request logger to capture every incoming HTTP request (dev use)
+if (process.env.NODE_ENV !== 'production') {
+  app.use((req, res, next) => {
+    try {
+      console.log(`[HTTP] ${new Date().toISOString()} ${req.method} ${req.originalUrl} - headers: ${Object.keys(req.headers).slice(0,6).join(',')}`);
+    } catch (e) {
+      // ignore logging errors
+    }
+    next();
+  });
+}
 
 // --- NEW: Define allowed origins in one place ---
 const rawAllowedOrigins = [
@@ -74,20 +118,18 @@ app.use(express.json());
 
 // Connect to MongoDB
 const connectDB = async () => {
+  console.log('Attempting to connect to MongoDB...');
   try {
-    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/cumeet', {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-      serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of 30s
+    // --- FIX: Use MONGO_URI which matches your .env file ---
+    await mongoose.connect(process.env.MONGO_URI, {
+      serverSelectionTimeoutMS: 5000, // Keep this for faster connection timeouts
     });
-    console.log('✅ Connected to MongoDB');
+    console.log('✅ MongoDB Connected Successfully.');
   } catch (err) {
-    console.error('❌ MongoDB connection error:', err.message);
-    console.log('⚠️  Running without database - some features may not work');
-    console.log('💡 To fix this:');
-    console.log('   1. Install MongoDB locally: https://docs.mongodb.com/manual/installation/');
-    console.log('   2. Start MongoDB service: mongod');
-    console.log('   3. Or use MongoDB Atlas cloud database');
+    console.error('❌ MongoDB Connection Error:', err.message);
+    // It's critical to exit if the DB connection fails, otherwise the app will hang.
+    console.error('The application will now exit. Please check your MONGO_URI environment variable and database status.');
+    process.exit(1);
   }
 };
 

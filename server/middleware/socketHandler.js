@@ -202,7 +202,10 @@ const socketHandler = (io, worker) => {
         // Forward 'signal' messages between peers to support simple-peer negotiation
         socket.on('signal', ({ targetSocketId, signal, userId }) => {
             if (!targetSocketId) return;
-            // Send the signal to the target socket
+            // Log and forward the signal to the target socket
+            try {
+                console.log(`Relaying signal from ${socket.id} to ${targetSocketId} (fromUserId=${userId})`);
+            } catch (e) {}
             io.to(targetSocketId).emit('signal', { signal, fromSocketId: socket.id, fromUserId: userId });
         });
     });

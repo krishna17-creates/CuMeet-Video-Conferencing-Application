@@ -2,94 +2,189 @@ const express = require('express');
 const Meeting = require('../models/Meeting');
 const User = require('../models/User');
 const auth = require('../middleware/auth');
-const nodemailer = require('nodemailer');
+const sgMail = require('@sendgrid/mail');
 
 const router = express.Router();
 
-// Email transporter setup
+// In-memory buffer of recent email send results (dev/debug only). Keep small to avoid memory growth.
+const SEND_RESULTS = [];
+const pushSendResults = (entry) => {
+  try {
+    SEND_RESULTS.unshift(entry);
+    if (SEND_RESULTS.length > 50) SEND_RESULTS.length = 50;
+  } catch (e) {
+    console.error('Failed to push send results', e);
+  }
+};
+
+// Simple request logger for this router to help trace scheduling flow
+router.use((req, res, next) => {
+  try {
+    console.log(`[Meetings][${new Date().toISOString()}] ${req.method} ${req.originalUrl} - body keys: ${req.body ? Object.keys(req.body).join(',') : 'none'}`);
+  } catch (e) {
+    console.log('[Meetings] request logger error', e);
+  }
+  next();
+});
+
+// Quick indicator that this routes file was loaded (dev-only)
+if (process.env.NODE_ENV !== 'production') {
+  console.log('[Meetings] routes loaded (debug mode)');
+}
+
+// Development-only trace endpoint to verify server logging and routing.
+// GET /api/meetings/debug/trace
+router.get('/debug/trace', (req, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(403).json({ success: false, message: 'Not allowed in production' });
+  }
+  console.log('[Meetings][TRACE] Received debug trace request from', req.ip, 'headers:', Object.keys(req.headers).slice(0,10));
+  res.json({ success: true, message: 'trace ok', time: new Date().toISOString() });
+});
+
+// Email setup using SendGrid
 // You can disable outgoing emails by setting DISABLE_EMAILS=true in environment variables.
 const EMAILS_DISABLED = process.env.DISABLE_EMAILS === 'true';
 
-const createTransporter = () => {
-  return nodemailer.createTransport({
-    host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-    port: process.env.EMAIL_PORT || 587,
-    secure: false,
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS
-    }
-  });
-};
+// Configure SendGrid if API key is present
+if (process.env.SENDGRID_API_KEY) {
+  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+}
+
+// DEBUG: Print a concise summary of email configuration (do not print secrets)
+console.log('[Meetings][EmailConfig] SENDGRID_API_KEY present=', !!process.env.SENDGRID_API_KEY, 'SENDER_EMAIL present=', !!process.env.SENDER_EMAIL, 'DISABLE_EMAILS=', process.env.DISABLE_EMAILS);
+
+// Also print the computed boolean used by the code so there's no ambiguity
+console.log('[Meetings] EMAILS_DISABLED (computed boolean) =', EMAILS_DISABLED);
 
 // Send meeting invitation email
-const sendMeetingInvitation = async (meeting, participantEmails, hostName) => {
+// Send meeting invitation email
+const sendMeetingInvitation = async (meeting, participantEmails, hostName, traceId) => {
+  const logPrefix = `[SendGrid:${traceId}]`;
+  console.log(`${logPrefix} Starting sendMeetingInvitation for meeting ${meeting.meetingId}.`);
+
   if (EMAILS_DISABLED) {
-    console.log('Email sending disabled via DISABLE_EMAILS env var; skipping invitations');
+    console.log(`${logPrefix} SKIPPING: Email sending is disabled via DISABLE_EMAILS=true environment variable.`);
     return;
   }
 
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    console.log('Email credentials not configured, skipping email notifications');
+  if (!process.env.SENDGRID_API_KEY || !process.env.SENDER_EMAIL) {
+    console.error(`${logPrefix} SKIPPING: SendGrid is not configured. Ensure SENDGRID_API_KEY and SENDER_EMAIL are set in the .env file.`);
     return;
   }
 
+  if (!Array.isArray(participantEmails) || participantEmails.length === 0) {
+    console.log(`${logPrefix} SKIPPING: No valid participant emails provided.`);
+    return;
+  }
   // It's good practice to re-check expiration before sending,
   // in case of a delay.
   if (meeting.checkExpiration()) {
     await meeting.save();
-    console.log(`Skipping email for expired meeting: ${meeting.meetingId}`);
+    console.log(`${logPrefix} SKIPPING: Meeting ${meeting.meetingId} is expired.`);
     return;
   }
 
   try {
-    const transporter = createTransporter();
-    
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
-      subject: `Meeting Invitation: ${meeting.title}`,
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #3b82f6;">You're invited to a meeting</h2>
-          <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0; border: 1px solid #e2e8f0;">
-            <h3>${meeting.title}</h3>
-            <p><strong>Host:</strong> ${hostName}</p>
-            <p><strong>When:</strong> ${meeting.formattedScheduledAt || new Date(meeting.scheduledAt).toString()}</p>
-            <p><strong>Duration:</strong> ${meeting.duration} minutes</p>
-            ${meeting.description ? `<p><strong>Description:</strong> ${meeting.description}</p>` : ''}
-          </div>
-          <div style="text-align: center; margin: 30px 0;">
-            <a href="${meeting.meetingLink}" 
-               style="background: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
-              Join Meeting
-            </a>
-          </div>
-          <p style="color: #6b7280; font-size: 14px;">
-            Meeting ID: ${meeting.meetingId}<br>
-            Link: <a href="${meeting.meetingLink}">${meeting.meetingLink}</a>
-          </p>
+    const subject = `Meeting Invitation: ${meeting.title}`;
+    const htmlBody = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #3b82f6;">You're invited to a meeting</h2>
+        <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0; border: 1px solid #e2e8f0;">
+          <h3>${meeting.title}</h3>
+          <p><strong>Host:</strong> ${hostName}</p>
+          <p><strong>When:</strong> ${meeting.formattedScheduledAt || new Date(meeting.scheduledAt).toString()}</p>
+          <p><strong>Duration:</strong> ${meeting.duration} minutes</p>
+          ${meeting.description ? `<p><strong>Description:</strong> ${meeting.description}</p>` : ''}
         </div>
-      `
-    };
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${meeting.meetingLink}" 
+             style="background: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
+            Join Meeting
+          </a>
+        </div>
+        <p style="color: #6b7280; font-size: 14px;">
+          Meeting ID: ${meeting.meetingId}<br>
+          Link: <a href="${meeting.meetingLink}">${meeting.meetingLink}</a>
+        </p>
+      </div>
+    `;
 
-    for (const email of participantEmails) {
-      await transporter.sendMail({
-        ...mailOptions,
-        to: email
-      });
+    // Use SendGrid to send emails. Send individually to preserve personalization and avoid exposure of recipient list.
+    const fromEmail = process.env.SENDER_EMAIL;
+
+    console.log(`${logPrefix} Preparing to send ${participantEmails.length} invitations from sender: ${fromEmail}.`);
+
+    // Send each email and capture per-recipient result to avoid a single failure hiding others.
+    const results = await Promise.all(
+      participantEmails.map(async (email) => {
+        // Basic email validation
+        if (typeof email !== 'string' || !email.includes('@')) {
+          console.warn(`${logPrefix} Invalid email format found and skipped: "${email}"`);
+          return { email, ok: false, error: 'Invalid email format' };
+        }
+        const msg = {
+          to: email,
+          from: fromEmail,
+          subject,
+          html: htmlBody
+        };
+
+        try {
+          const res = await sgMail.send(msg);
+          // sgMail.send can return an array with response(s)
+          console.log(`${logPrefix} Sent to ${email}; status: ${res?.[0]?.statusCode}`);
+          return { email, ok: true, status: res && res[0] && res[0].statusCode };
+        } catch (err) {
+          const body = err?.response?.body || err;
+          console.error(`${logPrefix} Error sending to ${email}:`, JSON.stringify(body));
+          return { email, ok: false, error: body };
+        }
+      })
+    );
+
+    const failed = results.filter(r => !r.ok);
+    if (failed.length > 0) {
+      console.warn(`${logPrefix} ${failed.length} of ${results.length} invitations failed.`);
+    } else {
+      console.log(`${logPrefix} All invitations sent successfully.`);
     }
-    
-    console.log('Meeting invitations sent successfully');
+    // Store results in in-memory buffer for debug inspection
+    try {
+      pushSendResults({
+        type: 'meeting',
+        meetingId: meeting.meetingId,
+        time: new Date().toISOString(),
+        results
+      });
+    } catch (e) {
+      console.error('Failed to store send results', e);
+    }
   } catch (error) {
-    console.error('Error sending meeting invitations:', error);
+    // This catch is for unexpected issues constructing the request or similar.
+    console.error(`${logPrefix} Unexpected error during invitation process:`, error?.response?.body || error);
   }
 };
 
 // Create a new meeting
 router.post('/', auth, async (req, res) => {
   try {
+    // --- NEW LOG: Confirming entry into the route handler ---
+    console.log('[Meetings Route] POST / handler reached after auth middleware.');
+
     const { title, description, scheduledAt, duration, participants, type, formattedScheduledAt } = req.body;
     const hostId = req.user.userId;
+
+    // traceId helps correlate logs for this scheduling request
+    const traceId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
+    console.log(`[Meetings:${traceId}] POST / - incoming data:`, {
+      title: title?.slice(0, 120),
+      scheduledAt,
+      duration,
+      participantsCount: Array.isArray(participants) ? participants.length : (participants ? String(participants).split(',').length : 0),
+      userId: hostId
+    });
+    console.time(`[Meetings:${traceId}] total`);
 
     const host = await User.findById(hostId);
     if (!host) {
@@ -109,8 +204,21 @@ router.post('/', auth, async (req, res) => {
     if (scheduledAt) meetingData.scheduledAt = new Date(scheduledAt);
     if (formattedScheduledAt) meetingData.formattedScheduledAt = formattedScheduledAt;
     if (duration) meetingData.duration = duration;
-    if (participants && Array.isArray(participants)) {
-      meetingData.invitedEmails = participants.filter(email => email.trim());
+    
+    // Debug log for participants processing
+    console.log('[Debug] Incoming participants:', {
+      participants,
+      isArray: Array.isArray(participants),
+      rawLength: participants ? participants.length : 'N/A'
+    });
+    
+    // Robustly handle participants, whether it's an array or a comma-separated string
+    if (participants) {
+      const emails = Array.isArray(participants) 
+        ? participants 
+        : String(participants).split(',');
+      
+      meetingData.invitedEmails = emails.map(email => email.trim()).filter(email => email);
     }
 
     // Set expiration time based on scheduled time + duration
@@ -144,7 +252,7 @@ router.post('/', auth, async (req, res) => {
     }
 
     const meeting = new Meeting(meetingData);
-    
+
     // Explicitly generate the meeting link to ensure it's correct and complete.
     const frontendUrl = process.env.FRONTEND_URL;
     if (!frontendUrl) {
@@ -152,26 +260,62 @@ router.post('/', auth, async (req, res) => {
     }
     meeting.meetingLink = `${frontendUrl || 'http://localhost:5173'}/meeting/${meeting.meetingId}`;
 
-    await meeting.save();
+  console.log(`[Meetings:${traceId}] Saving meeting to DB...`);
+  console.time(`[Meetings:${traceId}] save`);
+  await meeting.save();
+  console.timeEnd(`[Meetings:${traceId}] save`);
+  console.log(`[Meetings:${traceId}] Meeting saved:`, { id: meeting._id, meetingId: meeting.meetingId });
 
     // Add host as participant
+    console.log(`[Meetings:${traceId}] Adding host as participant:`, { hostId, hostEmail: host.email });
+    console.time(`[Meetings:${traceId}] addParticipant`);
     await meeting.addParticipant({
       userId: hostId,
       name: host.name,
       email: host.email,
       isHost: true
     });
+    console.timeEnd(`[Meetings:${traceId}] addParticipant`);
+    console.log(`[Meetings:${traceId}] Host added as participant`);
 
     // Send email invitations if participants are specified
-    if (meetingData.invitedEmails && meetingData.invitedEmails.length > 0) {
-      await sendMeetingInvitation(meeting, meetingData.invitedEmails, host.name);
+    let emailsQueued = false;
+  if (meetingData.invitedEmails && meetingData.invitedEmails.length > 0) {
+      // Kick off email sending asynchronously so the API response doesn't block
+      // waiting for external email providers. sendMeetingInvitation returns
+      // per-recipient results; we intentionally do not await here.
+      try {
+        emailsQueued = true;
+        console.log(`[Meetings:${traceId}] Queuing email sends for participants:`, meetingData.invitedEmails.length, 'emailsQueued set to true');
+        // Decouple background send from request flow
+        setImmediate(() => {
+          // Wrap in a try/catch because the function is now async and could throw
+          try {
+            console.log(`[Meetings:${traceId}] Background send process starting.`);
+            sendMeetingInvitation(meeting, meetingData.invitedEmails, host.name, traceId).catch(err => {
+              console.error(`[Meetings:${traceId}] Unhandled promise rejection in background email send:`, err);
+            });
+          } catch (err) {
+            console.error(`[Meetings:${traceId}] Critical error invoking background email send:`, err);
+          }
+        });
+      } catch (err) {
+        console.error('[Meetings] Failed to queue email sends:', err);
+        emailsQueued = false;
+      }
+    } else {
+      console.log(`[Meetings:${traceId}] No invited emails to send. Skipping email logic.`);
     }
 
     await meeting.populate('host', 'name email');
 
+    console.log(`[Meetings:${traceId}] Sending response to client; emailsQueued=`, emailsQueued);
+    console.timeEnd(`[Meetings:${traceId}] total`);
+
     res.status(201).json({
       success: true,
       message: 'Meeting created successfully',
+      emailsQueued,
       meeting: {
         id: meeting._id,
         meetingId: meeting.meetingId,
@@ -199,6 +343,76 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
+// Debug: trigger a test email send (protected)
+// POST /api/meetings/debug/send-test
+// body: { to?: string, subject?: string, html?: string }
+router.post('/debug/send-test', auth, async (req, res) => {
+  try {
+    const to = req.body.to || req.user?.email;
+    const subject = req.body.subject || 'CuMeet Test Email';
+    const html = req.body.html || `<p>This is a test email from CuMeet to <strong>${to}</strong>.</p>`;
+
+    if (!to) {
+      return res.status(400).json({ success: false, message: 'No recipient specified for test email' });
+    }
+
+    if (EMAILS_DISABLED) {
+      console.log('[Debug Send] Emails are disabled via DISABLE_EMAILS; skipping test send');
+      return res.json({ success: true, emailsQueued: false, message: 'Emails are disabled on the server' });
+    }
+
+    if (!process.env.SENDGRID_API_KEY || !process.env.SENDER_EMAIL) {
+      console.log('[Debug Send] SendGrid not configured; cannot send test email');
+      return res.json({ success: true, emailsQueued: false, message: 'SendGrid not configured on server' });
+    }
+
+    // Fire-and-forget background send
+    (async () => {
+      try {
+        const msg = { to, from: process.env.SENDER_EMAIL, subject, html };
+        const r = await sgMail.send(msg);
+        console.log('[Debug Send] Test email sent', { to, status: r && r[0] && r[0].statusCode });
+        // record debug send result
+        try {
+          pushSendResults({
+            type: 'debug',
+            to,
+            time: new Date().toISOString(),
+            status: r && r[0] && r[0].statusCode
+          });
+        } catch (e) {
+          console.error('Failed to store debug send result', e);
+        }
+      } catch (err) {
+        console.error('[Debug Send] Error sending test email:', err && err.response && err.response.body ? err.response.body : err);
+        try {
+          pushSendResults({
+            type: 'debug',
+            to,
+            time: new Date().toISOString(),
+            error: err && err.response && err.response.body ? err.response.body : String(err)
+          });
+        } catch (e) {
+          console.error('Failed to store debug send error', e);
+        }
+      }
+    })();
+
+    return res.json({ success: true, emailsQueued: true, message: 'Test email queued for background sending' });
+  } catch (error) {
+    console.error('Debug send error:', error);
+    return res.status(500).json({ success: false, message: 'Server error while queuing test email' });
+  }
+});
+
+// GET recent send results (dev-only)
+router.get('/debug/send-results', auth, (req, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(403).json({ success: false, message: 'Not allowed in production' });
+  }
+  res.json({ success: true, results: SEND_RESULTS.slice(0, 50) });
+});
+
 // Get all meetings for the authenticated user
 router.get('/', auth, async (req, res) => {
   try {
@@ -211,17 +425,6 @@ router.get('/', auth, async (req, res) => {
         { 'participants.user': userId }
       ]
     };
-
-    if (status) {
-      query.status = status;
-    }
-
-    const meetings = await Meeting.find(query)
-      .populate('host', 'name email')
-      .sort({ createdAt: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit)
-      .lean();
 
     const totalMeetings = await Meeting.countDocuments(query);
 

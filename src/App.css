@@ -118,6 +118,7 @@ body {
   border: 2px solid #e5e7eb;
   border-radius: 8px;
   font-size: 1rem;
+  color: #374151;
   transition: border-color 0.2s ease;
 }
 

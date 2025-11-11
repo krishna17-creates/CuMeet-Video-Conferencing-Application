@@ -1,6 +1,7 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import axios from "axios";
+import { useState, useEffect } from "react";
+import '../styles/scheduleMeeting.css';
+import { useNavigate } from 'react-router-dom';
+import api from '../api/axios'; // Use the new centralized instance
 import { FiCalendar, FiClock, FiUsers, FiFileText } from "react-icons/fi";
 import { format } from "date-fns";
 
@@ -16,8 +17,14 @@ const ScheduleMeeting = () => {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [createdMeeting, setCreatedMeeting] = useState(null);
+  const [emailsQueued, setEmailsQueued] = useState(false);
 
   const navigate = useNavigate();
+
+  useEffect(() => {
+    // Ensure body scrolling is enabled when visiting schedule page
+    try { document.body.style.overflow = ''; } catch (e) {}
+  }, []);
 
   const handleChange = (e) => {
     setFormData({
@@ -32,6 +39,8 @@ const ScheduleMeeting = () => {
     setSuccess("");
     setLoading(true);
 
+    console.log('[Schedule] Submit clicked, formData:', formData);
+
     try {
       const scheduledDateTime = new Date(formData.scheduledAt);
       const meetingData = {
@@ -44,11 +53,28 @@ const ScheduleMeeting = () => {
           .filter(Boolean),
       };
 
-      const response = await axios.post("/meetings", meetingData);
+      // --- NEW FRONTEND LOG ---
+      console.log('[Schedule] Sending meeting data to server:', meetingData);
+
+      console.log('[Schedule] Prepared meetingData:', {
+        title: meetingData.title,
+        scheduledAt: meetingData.scheduledAt,
+        participantsCount: meetingData.participants.length
+      });
+
+      // Use the new instance. The URL is now relative to '/api'
+      const response = await api.post('/meetings', meetingData);
+      console.log('[Schedule] /meetings response:', response && response.data);
       setSuccess("Meeting scheduled successfully!");
       setCreatedMeeting(response.data.meeting);
+      setEmailsQueued(Boolean(response.data.emailsQueued));
     } catch (error) {
-      setError(error.response?.data?.message || "Failed to schedule meeting");
+      console.error('[Schedule] Error scheduling:', error);
+      // Provide detailed error message for debugging
+      const serverMsg = error?.response?.data?.message;
+      const errDetail = error?.response?.data || error?.message || String(error);
+      setError(serverMsg || "Failed to schedule meeting. See console for details.");
+      console.error('[Schedule] Error details:', errDetail);
     } finally {
       setLoading(false);
     }
@@ -213,6 +239,11 @@ const ScheduleMeeting = () => {
                 <strong>Note:</strong> This meeting link will expire after the
                 scheduled duration ends.
               </p>
+              {emailsQueued ? (
+                <div className="alert alert-info">Invitations have been queued and are being sent in the background.</div>
+              ) : (
+                <div className="alert alert-warning">Invitations were not queued — email sending may not be configured on the server.</div>
+              )}
               <button
                 onClick={() => navigate('/dashboard')}
                 className="btn btn-primary"

@@ -7,6 +7,7 @@ import { NotificationProvider } from './context/NotificationContext.jsx';
 import './api/axiosConfig.js'; 
 import App from './App.jsx';
 import './index.css';
+import './styles/scheduleMeeting.css';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

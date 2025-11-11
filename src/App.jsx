@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate ,useLocation } from 'react-router-dom';
 import HomePage from './components/HomePage';
 import LoginPage from './components/LoginPage';
 import SignUpPage from './components/SignUpPage';
@@ -12,6 +12,11 @@ import './App.css';
 
 function App() {
   const { user, loading } = useAuth();
+  const location = useLocation();
+
+  const isMeetingPage = location.pathname.startsWith('/meeting/');
+
+
 
   if (loading) {
     return (
@@ -25,7 +30,8 @@ function App() {
   return (
     <>
       <div className="app">
-        {user && <Navbar />}
+        {/* Only show Navbar if user is logged in AND not on the meeting page */}
+        {user && !isMeetingPage && <Navbar />}
       <Routes>
         <Route path="/" element={user ? <Navigate to="/dashboard" /> : <HomePage />} />
         <Route path="/login" element={user ? <Navigate to="/dashboard" /> : <LoginPage />} />

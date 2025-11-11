@@ -58,9 +58,16 @@ const CalendarWidget = ({ meetings }) => {
       </div>
       <div className="calendar-widget-grid">
         {/* Day names: S, M, T, W, T, F, S */}
-        {/* <h1>harika</h1> */}
-        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(day => (
-          <div key={day} className="calendar-day-name">
+        {[
+          { day: 'S', key: 'sun' },
+          { day: 'M', key: 'mon' },
+          { day: 'T', key: 'tue' },
+          { day: 'W', key: 'wed' },
+          { day: 'T', key: 'thu' },
+          { day: 'F', key: 'fri' },
+          { day: 'S', key: 'sat' }
+        ].map(({ day, key }) => (
+          <div key={key} className="calendar-day-name">
             {day}
           </div>
         ))}

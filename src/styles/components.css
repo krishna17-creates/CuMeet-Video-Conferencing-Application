@@ -847,7 +847,7 @@
   z-index: 1;
 }
 
-.meeting-room > * {
+.meeting-room > *:not(.settings-panel) {
   position: relative;
   z-index: 2;
 }

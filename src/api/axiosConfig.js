@@ -34,3 +34,30 @@ axios.interceptors.request.use(config => {
   return config;
 });
 
+// Debugging: log axios requests and responses to trace scheduling flow
+axios.interceptors.request.use(config => {
+  try {
+    console.log('[Axios] Request:', config.method.toUpperCase(), config.url, 'data keys:', config.data ? Object.keys(config.data) : 'none');
+  } catch (e) {
+    // ignore
+  }
+  return config;
+}, err => {
+  console.error('[Axios] Request error:', err);
+  return Promise.reject(err);
+});
+
+axios.interceptors.response.use(response => {
+  try {
+    console.log('[Axios] Response:', response.status, response.config && response.config.url, 'data keys:', response.data ? Object.keys(response.data) : 'none');
+  } catch (e) {
+    // ignore
+  }
+  return response;
+}, error => {
+  try {
+    console.error('[Axios] Response error:', error?.response?.status, error?.response?.data || error.message);
+  } catch (e) {}
+  return Promise.reject(error);
+});
+
