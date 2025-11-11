@@ -113,9 +113,9 @@ const io = socketIo(server, {
 
 // --- UPDATED: Use specific CORS for Express (HTTP) routes ---
 // This makes your API routes as secure as your socket routes
-// Handle preflight OPTIONS requests for all routes. This is crucial for complex requests.
+// 1. Handle preflight requests for all routes. This is crucial for complex requests.
 app.options('*', cors(corsOptions));
-// Then, apply CORS to all other requests.
+// 2. Then, apply CORS, and JSON parsing for all other requests.
 app.use(cors(corsOptions));
 app.use(express.json());
 
@@ -138,6 +138,7 @@ const connectDB = async () => {
 
 connectDB();
 
+// --- FIX: Define API routes AFTER all middleware has been applied ---
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/meetings', meetingRoutes);
