@@ -1,12 +1,13 @@
 import axios from 'axios';
 
-// This sets the base URL for all axios requests to '/api'.
-// Now, a request like `axios.get('/meetings')` will automatically become
-// a request to '/api/meetings', which will be correctly handled by the Vite proxy.
+// --- CONSOLIDATED AXIOS CONFIGURATION ---
+
+// 1. Define the base URL for all API requests.
+// This uses an environment variable which MUST be set in your Vercel project settings.
 const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
 const baseURL = `${backendUrl}/api`;
-axios.defaults.baseURL = baseURL;
 
+// 2. Create a new Axios instance with the base URL.
 // Helpful runtime warnings for production builds to diagnose common deployment issues.
 // Vite only injects env vars prefixed with VITE_ at build-time. If VITE_BACKEND_URL
 // is missing in production the client will use a relative `/api` path which only
@@ -15,39 +16,39 @@ axios.defaults.baseURL = baseURL;
 try {
   if (import.meta.env.PROD && !backendUrl) {
     // eslint-disable-next-line no-console
-    console.warn('[Config] VITE_BACKEND_URL is not set (production). axios.baseURL set to', axios.defaults.baseURL, '\nThis will make requests relative to the frontend host and will fail unless the backend lives on the same origin.');
+    console.warn('[Config] VITE_BACKEND_URL is not set for production build. API requests will fail. baseURL is set to:', baseURL);
   }
   // Always print the effective base URL to make it easy to inspect in the browser console
   // eslint-disable-next-line no-console
-  console.info('[Config] axios baseURL =', axios.defaults.baseURL);
+  console.info('[Config] Axios baseURL is set to:', baseURL);
 } catch (e) {
   // In case import.meta is unavailable for some reason, avoid breaking the app
 }
 
-// This is a request interceptor that automatically adds the
-// authentication token to every API request.
-axios.interceptors.request.use(config => {
-  const token = localStorage.getItem('token'); // Assuming you store the token in localStorage
+const api = axios.create({
+  baseURL,
+});
+
+// 3. Add a request interceptor to automatically attach the auth token.
+api.interceptors.request.use(config => {
+  const token = localStorage.getItem('token');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
 });
 
-// Debugging: log axios requests and responses to trace scheduling flow
-axios.interceptors.request.use(config => {
+// 4. Add interceptors for logging requests and responses to aid debugging.
+api.interceptors.request.use(config => {
   try {
     console.log('[Axios] Request:', config.method.toUpperCase(), config.url, 'data keys:', config.data ? Object.keys(config.data) : 'none');
   } catch (e) {
     // ignore
   }
   return config;
-}, err => {
-  console.error('[Axios] Request error:', err);
-  return Promise.reject(err);
 });
 
-axios.interceptors.response.use(response => {
+api.interceptors.response.use(response => {
   try {
     console.log('[Axios] Response:', response.status, response.config && response.config.url, 'data keys:', response.data ? Object.keys(response.data) : 'none');
   } catch (e) {
@@ -61,3 +62,5 @@ axios.interceptors.response.use(response => {
   return Promise.reject(error);
 });
 
+// 5. Export the configured instance for use throughout the app.
+export default api;
