@@ -4,7 +4,7 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter as Router } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext.jsx';
 import { NotificationProvider } from './context/NotificationContext.jsx';
-import './api/axiosConfig.js'; 
+import './api/axios.js'; 
 import App from './App.jsx';
 import './index.css';
 import './styles/scheduleMeeting.css';

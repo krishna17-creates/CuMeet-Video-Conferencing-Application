@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import axios from 'axios';
+import api from '../api/axios';
 import {
   FiVideo,
   FiPlus,
@@ -111,7 +111,7 @@ const Dashboard = () => {
 
   const fetchMeetings = useCallback(async () => {
     try {
-      const response = await axios.get('/meetings');
+      const response = await api.get('/meetings');
       setMeetings(response.data.meetings || []);
     } catch (error) {
       console.error('Error fetching meetings:', error);
@@ -155,7 +155,7 @@ const Dashboard = () => {
 
   const handleStartMeeting = async () => {
     try {
-      const response = await axios.post('/meetings', { title: 'Instant Meeting', type: 'instant' });
+      const response = await api.post('/meetings', { title: 'Instant Meeting', type: 'instant' });
       navigate(`/meeting/${response.data.meeting.meetingId}`);
     } catch (error) {
       console.error('Error starting meeting:', error);
@@ -185,7 +185,7 @@ const Dashboard = () => {
     if (!window.confirm(confirmMessage)) return;
 
     try {
-      await axios.delete(`/meetings/${meetingId}`);
+      await api.delete(`/meetings/${meetingId}`);
       fetchMeetings();
     } catch (error) {
       console.error('Error cancelling/ending meeting:', error);

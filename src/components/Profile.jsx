@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import axios from 'axios';
+import api from '../api/axios';
 import { FiUser, FiMail, FiLock, FiSave, FiEdit3 } from 'react-icons/fi';
 
 const Profile = () => {
@@ -42,7 +42,7 @@ const Profile = () => {
     setLoading(true);
 
     try {
-      const response = await axios.put('/auth/profile', {
+      const response = await api.put('/auth/profile', {
         name: profileData.name,
         email: profileData.email
       });
@@ -74,7 +74,7 @@ const Profile = () => {
     setLoading(true);
 
     try {
-      await axios.put('/auth/password', {
+      await api.put('/auth/password', {
         currentPassword: profileData.currentPassword,
         newPassword: profileData.newPassword
       });
