@@ -113,7 +113,10 @@ const io = socketIo(server, {
 
 // --- UPDATED: Use specific CORS for Express (HTTP) routes ---
 // This makes your API routes as secure as your socket routes
-app.use(cors(corsOptions)); 
+// Handle preflight OPTIONS requests for all routes. This is crucial for complex requests.
+app.options('*', cors(corsOptions));
+// Then, apply CORS to all other requests.
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // Connect to MongoDB
