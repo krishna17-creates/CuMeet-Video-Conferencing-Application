@@ -74,7 +74,7 @@ const corsOptions = {
   origin: (origin, callback) => {
     // Log incoming origin for easier debugging in Render logs
     // Note: origin will be undefined for same-origin requests or some server-to-server calls
-    console.log('[CORS] Incoming origin:', origin);
+    console.log('[CORS] Incoming origin:', origin, '| Allowed list:', allowedOrigins);
 
     if (!origin) {
       // Allow non-browser or same-origin requests (no origin header)

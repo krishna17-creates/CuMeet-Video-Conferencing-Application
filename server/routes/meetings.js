@@ -427,6 +427,14 @@ router.get('/', auth, async (req, res) => {
     };
 
     const totalMeetings = await Meeting.countDocuments(query);
+    
+    // --- FIX: Actually fetch the meetings from the database ---
+    const meetings = await Meeting.find(query)
+      .sort({ scheduledAt: -1, createdAt: -1 }) // Show upcoming/most recent first
+      .limit(limit * 1)
+      .skip((page - 1) * limit)
+      .populate('host', 'name email')
+      .exec();
 
     res.json({
       success: true,
