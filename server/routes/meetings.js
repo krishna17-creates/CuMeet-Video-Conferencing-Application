@@ -1,6 +1,16 @@
 const express = require('express');
 const Meeting = require('../models/Meeting');
 const User = require('../models/User');
+
+// Simple request logger for this router to help trace scheduling flow
+router.use((req, res, next) => {
+  try {
+    console.log(`[Meetings][${new Date().toISOString()}] ${req.method} ${req.originalUrl} - body keys: ${req.body ? Object.keys(req.body).join(',') : 'none'}`);
+  } catch (e) {
+    console.log('[Meetings] request logger error', e);
+  }
+  next();
+});
 const auth = require('../middleware/auth');
 const sgMail = require('@sendgrid/mail');
 
@@ -16,16 +26,6 @@ const pushSendResults = (entry) => {
     console.error('Failed to push send results', e);
   }
 };
-
-// Simple request logger for this router to help trace scheduling flow
-router.use((req, res, next) => {
-  try {
-    console.log(`[Meetings][${new Date().toISOString()}] ${req.method} ${req.originalUrl} - body keys: ${req.body ? Object.keys(req.body).join(',') : 'none'}`);
-  } catch (e) {
-    console.log('[Meetings] request logger error', e);
-  }
-  next();
-});
 
 // Quick indicator that this routes file was loaded (dev-only)
 if (process.env.NODE_ENV !== 'production') {
