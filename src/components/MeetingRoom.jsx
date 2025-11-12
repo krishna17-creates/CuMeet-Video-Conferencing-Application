@@ -1285,6 +1285,7 @@ const RemoteVideo = ({ participant }) => {
         ref={videoRef}
         autoPlay
         playsInline
+        muted={true}
         // NOTE: We DO NOT MUTE the remote stream, because we want to hear the user.
         className="video-stream"
       />
