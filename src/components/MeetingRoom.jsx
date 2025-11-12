@@ -517,35 +517,42 @@ const consumeSfuStream = useCallback(async ({ producerId, userId, userName, kind
         // Update React state
         console.log(`[SFU] Updating participants state for userId: ${userId}`);
         setParticipants(prev => {
-          const existingParticipant = prev.find(p => p.userId === userId);
-          
-          if (existingParticipant) {
-            console.log(`[SFU] State: Adding track to existing participant ${userName}`);
-            const newStream = existingParticipant.stream;
-            newStream.addTrack(track);
-            
-            return prev.map(p => 
-              p.userId === userId 
-                ? { 
-                    ...p, 
-                    stream: newStream,
-                    audioOn: (kind === 'audio' ? true : p.audioOn),
-                    videoOn: (kind === 'video' ? true : p.videoOn),
-                  } 
-                : p
-            );
-          } else {
-            console.log(`[SFU] State: Creating new participant ${userName} with first track`);
-            return [...prev, {
-              socketId: `sfu-${userId}`, // Create a stable ID for SFU participants
-              userId,
-              userName,
-              stream: new MediaStream([track]),
-              audioOn: kind === 'audio',
-              videoOn: kind === 'video',
-            }];
-          }
-        });
+     const existingParticipant = prev.find(p => p.userId === userId);
+     
+     if (existingParticipant) {
+      console.log(`[SFU] State: Adding track to existing participant ${userName}`);
+      
+      // 1. Get all *current* tracks from the old stream
+      const oldStream = existingParticipant.stream;
+      const allTracks = [...oldStream.getTracks(), track]; // Add the new track
+      
+      // 2. Create a brand new MediaStream object
+      const newStream = new MediaStream(allTracks);
+
+      // 3. Return a new participant map
+      return prev.map(p => 
+       p.userId === userId 
+        ? { 
+         ...p, 
+         stream: newStream, // <-- Assign the NEW stream object
+         audioOn: (kind === 'audio' ? true : p.audioOn),
+          videoOn: (kind === 'video' ? true : p.videoOn),
+        } 
+       : p
+     );
+     } else {
+      // This is the first track, create the participant
+      console.log(`[SFU] State: Creating new participant ${userName} with first track`);
+      return [...prev, {
+       socketId: `sfu-${userId}`,
+       userId,
+       userName,
+       stream: new MediaStream([track]), // Create the stream
+       audioOn: kind === 'audio',
+       videoOn: kind === 'video',
+      }];
+     }
+    });
         console.log(`[SFU] Participant state update complete for ${userId}`);
 
       } catch (error) {
