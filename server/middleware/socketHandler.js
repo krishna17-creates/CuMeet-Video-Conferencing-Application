@@ -213,6 +213,14 @@ const socketHandler = (io, worker) => {
     });
     // --- End of new handler ---
 
+        // --- Chat Message Handler ---
+        socket.on('chat-message', (msg) => {
+            if (currentRoomId) {
+                // Broadcast the message to all other clients in the same room
+                socket.to(currentRoomId).emit('chat-message', msg);
+            }
+        });
+
         socket.on('disconnect', () => {
             console.log(`Socket disconnected: ${socket.id}`);
             leaveRoom();
