@@ -1,6 +1,10 @@
 const express = require('express');
 const Meeting = require('../models/Meeting');
 const User = require('../models/User');
+const auth = require('../middleware/auth');
+const sgMail = require('@sendgrid/mail');
+
+const router = express.Router();
 
 // Simple request logger for this router to help trace scheduling flow
 router.use((req, res, next) => {
@@ -11,10 +15,6 @@ router.use((req, res, next) => {
   }
   next();
 });
-const auth = require('../middleware/auth');
-const sgMail = require('@sendgrid/mail');
-
-const router = express.Router();
 
 // In-memory buffer of recent email send results (dev/debug only). Keep small to avoid memory growth.
 const SEND_RESULTS = [];

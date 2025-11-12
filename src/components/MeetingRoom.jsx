@@ -4,7 +4,6 @@ import { useAuth } from '../context/AuthContext';
 import api from '../api/axios'; // Use the new centralized instance
 import io from 'socket.io-client';
 import { Device } from 'mediasoup-client';
-import Peer from 'simple-peer';
 import { 
   FiMic, 
   FiMicOff, 
@@ -31,9 +30,7 @@ const MeetingRoom = () => {
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [participants, setParticipants] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
   const [connectionStatus, setConnectionStatus] = useState('Connecting...');
-  const [topology, setTopology] = useState('p2p'); // 'p2p' or 'sfu'
   const [hasJoined, setHasJoined] = useState(false);
   const [previewAudioOn, setPreviewAudioOn] = useState(true);
   const [previewVideoOn, setPreviewVideoOn] = useState(true);
@@ -48,11 +45,13 @@ const MeetingRoom = () => {
   const [selectedMicId, setSelectedMicId] = useState('');
   const settingsInitializedRef = useRef(false);
 
+  // --- Refactored: Error state is now a single string ---
+  const [error, setError] = useState('');
+
   // --- General Refs ---
   const socketRef = useRef();
   const localVideoRef = useRef();
   const localStreamRef = useRef();
-  const peersRef = useRef([]);
   const screenStreamRef = useRef();
 
   // Refs for SFU connection
@@ -60,6 +59,7 @@ const MeetingRoom = () => {
   const sfuSendTransportRef = useRef();
   const sfuRecvTransportRef = useRef();
   const sfuProducersRef = useRef(new Map());
+  const sfuConsumersRef = useRef(new Map());
 
   const fetchMeetingDetails = useCallback(async () => {
     try {
@@ -145,8 +145,7 @@ useEffect(() => {
       screenStreamRef.current.getTracks().forEach(track => track.stop());
     }
 
-    if (topology === 'p2p') destroyP2pConnections();
-    if (topology === 'sfu') destroySfuConnection();
+    destroySfuConnection();
     // Disconnect socket
     if (socketRef.current) {
       socketRef.current.disconnect();
@@ -231,6 +230,8 @@ useEffect(() => {
     socketRef.current.on('joined', ({ roomId: rId, socketId }) => {
       console.log('Server acknowledged join for room:', rId, 'socketId:', socketId);
       // If media isn't initialized yet, initialize it; otherwise clear loading
+      initializeSfuConnection();
+
       if (!localStreamRef.current) {
         initializeMedia(false).catch(()=>{});
       } else {
@@ -244,33 +245,27 @@ useEffect(() => {
       setConnectionStatus('Connection failed');
     });
 
-    // --- TOPOLOGY MIGRATION LOGIC (These need to be aware of current state) ---
-    socketRef.current.on('migrate-to-sfu', () => {
-      if (topology === 'sfu' && sfuDeviceRef.current) return; // Already in SFU mode
-      console.log('%cSERVER COMMAND: MIGRATE TO SFU', 'color: orange; font-weight: bold;');
-      setTopology('sfu');
-      destroyP2pConnections();
-      initializeSfuConnection();
+    // (1) This fires for YOU when you join, listing everyone already there
+    socketRef.current.on('existing-users', (users) => {
+      console.log(`%c[Socket] Found ${users.length} existing users:`, 'color: blue; font-weight: bold;', users);
+      // In a real app, you'd setParticipants(users) here
+      // For now, we'll just log it.
     });
 
-    socketRef.current.on('migrate-to-p2p', () => {
-      if (topology === 'p2p') return; // Already in P2P mode
-      console.log('%cSERVER COMMAND: MIGRATE TO P2P', 'color: green; font-weight: bold;');
-      setTopology('p2p');
-      destroySfuConnection();
-      // The server will re-send 'existing-users' to re-establish P2P connections
-      // For now, we just clean up the SFU side.
+    // (2) This fires for OTHERS when YOU join
+    socketRef.current.on('user-joined', ({ userName, userId, socketId }) => {
+      console.log(`%c[Socket] New user joined: ${userName} (ID: ${userId})`, 'color: green; font-weight: bold;');
+      // In a real app, you'd setParticipants(prev => [...prev, newUser]) here
+      // For now, we'll just log it.
     });
 
-    // --- SFU Specific Listeners (These need to be aware of current state) ---
+    // --- SFU Specific Listeners ---
     socketRef.current.on('sfu-existing-producers', (producers) => {
-      if (topology !== 'sfu') return;
       console.log('Received existing producers:', producers);
       producers.forEach(producerInfo => consumeSfuStream(producerInfo));
     });
     
     socketRef.current.on('new-producer', (producerInfo) => {
-      if (topology !== 'sfu') return;
       console.log('A new producer has joined:', producerInfo);
       consumeSfuStream(producerInfo);
     });
@@ -284,162 +279,24 @@ useEffect(() => {
       // To implement: find participant by producerId and remove their stream.
     });
 
-
-    socketRef.current.on('existing-users', (existingUsers) => { // This needs to be aware of current state
-      console.log('Existing users:', existingUsers);
-      
-      // Create peer connections for existing users
-      existingUsers.forEach(existingUser => {
-        if (topology === 'p2p') {
-          createPeer(existingUser.socketId, existingUser.userId, existingUser.userName, true);
-        }
-      });
-    });
-    
-    socketRef.current.on('user-joined', (userData) => {
-      console.log('User joined:', userData);
-      
-      // Create peer connection for new user (they will initiate)
-      if (topology === 'p2p') {
-        createPeer(userData.socketId, userData.userId, userData.userName, false);
-      }
-    });
-
     // Chat messages
     socketRef.current.on('chat-message', (msg) => {
       setChatMessages(prev => [...prev, msg]);
     });
     
-    socketRef.current.on('signal', ({ signal, fromSocketId, fromUserId }) => {
-      console.log('Received signal from:', fromUserId);
-      
-      const peerObj = peersRef.current.find(p => p.socketId === fromSocketId);
-      if (peerObj && peerObj.peer) {
-        try {
-          peerObj.peer.signal(signal);
-        } catch (error) {
-          console.error('Error processing signal:', error);
-        }
-      }
-    });
-    
     socketRef.current.on('user-left', ({ socketId, userId }) => {
       console.log('User left:', userId);
-      
-      removePeer(socketId);
+      // Remove participant from the list
+      setParticipants(prev => prev.filter(p => p.userId !== userId));
+      // Consumers associated with this user will be closed by the server,
+      // and their tracks will end, which should be handled gracefully.
     });
 
     socketRef.current.on('disconnect', () => {
       console.log('Disconnected from signaling server');
       setConnectionStatus('Disconnected');
     });
-  });
-
-  const removePeer = (socketId) => {
-    const peerObj = peersRef.current.find(p => p.socketId === socketId);
-    if (peerObj) peerObj.peer?.destroy();
-    peersRef.current = peersRef.current.filter(p => p.socketId !== socketId);
-    setParticipants(prev => prev.filter(p => p.socketId !== socketId));
-  };
-
-  const createPeer = useCallback((socketId, userId, userName, initiator) => {
-    const peer = new Peer({
-      initiator,
-      // enable trickle to exchange ICE candidates incrementally
-      trickle: true,
-      stream: localStreamRef.current,
-      config: {
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun2.l.google.com:19302' }
-          // Add TURN server here if you have one
-          // { urls: 'turn:turn.example.com:3478', username: 'user', credential: 'pass' }
-        ]
-      }
-    });
-
-    const peerObj = {
-      peer,
-      socketId,
-      userId,
-      userName,
-      videoRef: null
-    };
-
-    peer.on('signal', (signal) => {
-      console.log('Sending signal to:', userName, 'targetSocketId:', socketId, 'signal-type:', signal.type || 'unknown');
-      if (socketRef.current && socketRef.current.connected) {
-        socketRef.current.emit('signal', {
-          targetSocketId: socketId,
-          signal,
-          userId: user.id
-        });
-      }
-    });
-
-    // Attach low-level RTCPeerConnection state logs to help debug ICE/connectivity
-    setTimeout(() => {
-      try {
-        const pc = peer._pc;
-        if (pc) {
-          pc.addEventListener('iceconnectionstatechange', () => {
-            console.log(`Peer(${userName}) iceConnectionState:`, pc.iceConnectionState);
-          });
-          pc.addEventListener('icegatheringstatechange', () => {
-            console.log(`Peer(${userName}) iceGatheringState:`, pc.iceGatheringState);
-          });
-          pc.addEventListener('signalingstatechange', () => {
-            console.log(`Peer(${userName}) signalingState:`, pc.signalingState);
-          });
-        }
-      } catch (e) {
-        // ignore
-      }
-    }, 1000);
-
-    peer.on('stream', (remoteStream) => {
-      console.log('Received remote stream from:', userName);
-      
-      // Update participant with stream
-      setParticipants(prev => {
-        const updated = prev.filter(p => p.socketId !== socketId);
-        return [...updated, {
-          socketId,
-          userId,
-          userName,
-          stream: remoteStream,
-          audioOn: true,
-          videoOn: true
-        }];
-      });
-    });
-
-    peer.on('connect', () => {
-      console.log('Peer connection established with:', userName);
-    });
-
-    peer.on('error', (error) => {
-      console.error('Peer connection error with', userName, ':', error);
-    });
-
-    peer.on('close', () => {
-      console.log('Peer connection closed with:', userName);
-    });
-
-    peersRef.current.push(peerObj);
-  }, [user?.id]);
-
-  const destroyP2pConnections = useCallback(() => {
-    console.log('Tearing down all P2P connections.');
-    peersRef.current.forEach(peerObj => {
-      if (peerObj.peer) {
-        peerObj.peer.destroy();
-      }
-    });
-    peersRef.current = [];
-    setParticipants([]);
-  }, []);
+  }, [user]);
 
   const initializeSfuConnection = useCallback(async () => {
     console.log('Initializing SFU connection...');
@@ -447,7 +304,7 @@ useEffect(() => {
 
     // 1. Get Router RTP capabilities from server
     socketRef.current.emit('getRouterRtpCapabilities', meetingId, async (routerRtpCapabilities) => {
-      try {
+      if (routerRtpCapabilities && !routerRtpCapabilities.error) {
         // 2. Create a mediasoup-client Device
         const device = new Device();
         sfuDeviceRef.current = device;
@@ -458,7 +315,7 @@ useEffect(() => {
 
         // 4. Create a "send" transport to send our media
         socketRef.current.emit('createWebRtcTransport', { type: 'send' }, async (params) => {
-          if (params.error) return console.error('Error creating send transport:', params.error);
+          if (params.error) return setError(`Error creating send transport: ${params.error}`);
           
           const transport = device.createSendTransport(params);
           sfuSendTransportRef.current = transport;
@@ -468,6 +325,7 @@ useEffect(() => {
           });
 
           transport.on('produce', async ({ kind, rtpParameters, appData }, callback, errback) => {
+            if (!socketRef.current) return errback(new Error('Socket not connected'));
             socketRef.current.emit('produce', { transportId: transport.id, kind, rtpParameters, appData }, ({ id }) => {
               callback({ id });
             });
@@ -488,7 +346,7 @@ useEffect(() => {
 
         // 6. Create a "receive" transport to receive media from others
         socketRef.current.emit('createWebRtcTransport', { type: 'recv' }, async (params) => {
-          if (params.error) return console.error('Error creating recv transport:', params.error);
+          if (params.error) return setError(`Error creating recv transport: ${params.error}`);
 
           const transport = device.createRecvTransport(params);
           sfuRecvTransportRef.current = transport;
@@ -498,10 +356,9 @@ useEffect(() => {
           });
         });
 
-      } catch (err) {
-        console.error('Error initializing SFU connection:', err);
-        setError('Failed to connect to the media server.');
-      }
+      } else {
+        setError(`Could not get router capabilities: ${routerRtpCapabilities?.error || 'Unknown error'}`);
+      } 
     });
   }, [meetingId]);
 
@@ -509,12 +366,20 @@ useEffect(() => {
     if (!sfuDeviceRef.current || !sfuRecvTransportRef.current) return;
 
     const { rtpCapabilities } = sfuDeviceRef.current;
+    if (!socketRef.current) return;
+
     socketRef.current.emit('consume', { rtpCapabilities, producerId, transportId: sfuRecvTransportRef.current.id }, async (params) => {
       if (params.error) {
         return console.error('Cannot consume', params.error);
       }
 
       const consumer = await sfuRecvTransportRef.current.consume(params);
+      sfuConsumersRef.current.set(consumer.id, consumer);
+
+      // The server should tell the client to resume the consumer
+      // For simplicity, we do it here, but a server-side 'resume' event is better.
+      socketRef.current.emit('resume-consumer', { consumerId: consumer.id });
+
       const { track } = consumer;
 
       setParticipants(prev => {
@@ -565,6 +430,10 @@ useEffect(() => {
       sfuProducersRef.current.forEach(producer => producer.close());
       sfuProducersRef.current.clear();
     }
+    if (sfuConsumersRef.current.size > 0) {
+      sfuConsumersRef.current.forEach(consumer => consumer.close());
+      sfuConsumersRef.current.clear();
+    }
     setParticipants([]);
   }, []);
 
@@ -574,16 +443,13 @@ useEffect(() => {
       if (audioTrack) {
         audioTrack.enabled = !audioTrack.enabled;
         setIsAudioOn(audioTrack.enabled);
-        // Pause/resume SFU audio producer
-        if (topology === 'sfu') {
-          const audioProducer = sfuProducersRef.current.get('audio');
-          if (audioProducer) {
-            audioTrack.enabled ? audioProducer.resume() : audioProducer.pause();
-          }
+        const audioProducer = sfuProducersRef.current.get('audio');
+        if (audioProducer) {
+          audioTrack.enabled ? audioProducer.resume() : audioProducer.pause();
         }
       }
     }
-  }, [topology]);
+  }, []);
 
   const toggleVideo = useCallback(() => {
     if (localStreamRef.current) {
@@ -591,18 +457,13 @@ useEffect(() => {
       if (videoTrack) {
         videoTrack.enabled = !videoTrack.enabled;
         setIsVideoOn(videoTrack.enabled);
-        // Pause/resume SFU video producer
-        if (topology === 'sfu') {
-          const videoProducer = sfuProducersRef.current.get('video');
-          if (videoProducer) {
-            videoTrack.enabled ? videoProducer.resume() : videoProducer.pause();
-          }
+        const videoProducer = sfuProducersRef.current.get('video');
+        if (videoProducer) {
+          videoTrack.enabled ? videoProducer.resume() : videoProducer.pause();
         }
       }
     }
-  }, [topology]);
-
-  // ... after toggleVideo function
+  }, []);
 
   const handleDeviceChange = async () => {
     console.log('Applying new devices...');
@@ -625,28 +486,11 @@ useEffect(() => {
       const newAudioTrack = newStream.getAudioTracks()[0];
       const newVideoTrack = newStream.getVideoTracks()[0];
 
-      // 2. Replace tracks in all active connections
-      if (topology === 'p2p') {
-        peersRef.current.forEach(peerObj => {
-          if (peerObj.peer && peerObj.peer._pc) {
-            try {
-              const audioSender = peerObj.peer._pc.getSenders().find(s => s.track && s.track.kind === 'audio');
-              if (audioSender && newAudioTrack) audioSender.replaceTrack(newAudioTrack);
-
-              const videoSender = peerObj.peer._pc.getSenders().find(s => s.track && s.track.kind === 'video');
-              if (videoSender && newVideoTrack) videoSender.replaceTrack(newVideoTrack);
-            } catch (err) {
-              console.error('Error replacing track for peer', peerObj.userName, err);
-            }
-          }
-        });
-      } else if (topology === 'sfu') {
-        const audioProducer = sfuProducersRef.current.get('audio');
-        if (audioProducer && newAudioTrack) await audioProducer.replaceTrack({ track: newAudioTrack });
-        
-        const videoProducer = sfuProducersRef.current.get('video');
-        if (videoProducer && newVideoTrack) await videoProducer.replaceTrack({ track: newVideoTrack });
-      }
+      const audioProducer = sfuProducersRef.current.get('audio');
+      if (audioProducer && newAudioTrack) await audioProducer.replaceTrack({ track: newAudioTrack });
+      
+      const videoProducer = sfuProducersRef.current.get('video');
+      if (videoProducer && newVideoTrack) await videoProducer.replaceTrack({ track: newVideoTrack });
 
       // 3. Update local stream ref with the new stream
       // Stop the OLD stream tracks
@@ -683,29 +527,10 @@ useEffect(() => {
       const screenTrack = screenStream.getVideoTracks()[0];
       screenTrack.onended = () => stopScreenShare();
 
-      // Replace video track for all peers
-      if (topology === 'p2p') {
-        peersRef.current.forEach(peerObj => {
-          if (peerObj.peer && peerObj.peer._pc) {
-            try {
-              const sender = peerObj.peer._pc.getSenders().find(s => s.track && s.track.kind === 'video');
-              if (sender) {
-                sender.replaceTrack(screenTrack).then(() => {
-                  console.log('Replaced video track with screen for peer', peerObj.userName);
-                }).catch(err => {
-                  console.error('Error replacing track with screen for peer', peerObj.userName, err);
-                });
-              }
-            } catch (err) {
-              console.error('Error accessing pc senders for screen share (p2p):', err);
-            }
-          }
-        });
-      } else if (topology === 'sfu') {
-        const videoProducer = sfuProducersRef.current.get('video');
-        if (videoProducer) await videoProducer.replaceTrack({ track: screenTrack });
-      }
-
+      // Replace video track with screen track in SFU
+      const videoProducer = sfuProducersRef.current.get('video');
+      if (videoProducer) await videoProducer.replaceTrack({ track: screenTrack });
+      
       // Update local video
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = screenStream;
@@ -714,7 +539,7 @@ useEffect(() => {
       console.error('Error sharing screen:', error);
       setIsScreenSharing(false);
     }
-  }, [topology]);
+  }, []);
 
   const stopScreenShare = useCallback(async () => {
     if (screenStreamRef.current) {
@@ -725,32 +550,14 @@ useEffect(() => {
 
     const cameraTrack = localStreamRef.current.getVideoTracks()[0];
 
-    if (topology === 'p2p') {
-      peersRef.current.forEach(peerObj => {
-        if (peerObj.peer && peerObj.peer._pc) {
-          try {
-            const sender = peerObj.peer._pc.getSenders().find(s => s.track && s.track.kind === 'video');
-            if (sender) {
-              sender.replaceTrack(cameraTrack).then(() => {
-                console.log('Restored camera track for peer', peerObj.userName);
-              }).catch(err => {
-                console.error('Error restoring camera track for peer', peerObj.userName, err);
-              });
-            }
-          } catch (err) {
-            console.error('Error accessing pc senders for restoring camera (p2p):', err);
-          }
-        }
-      });
-    } else if (topology === 'sfu') {
-      const videoProducer = sfuProducersRef.current.get('video');
-      if (videoProducer) await videoProducer.replaceTrack({ track: cameraTrack });
-    }
+    // Replace screen track with camera track in SFU
+    const videoProducer = sfuProducersRef.current.get('video');
+    if (videoProducer && cameraTrack) await videoProducer.replaceTrack({ track: cameraTrack });
 
     if (localVideoRef.current) {
       localVideoRef.current.srcObject = localStreamRef.current;
     }
-  }, [topology]);
+  }, []);
 
   const handleScreenShare = useCallback(() => {
     if (isScreenSharing) {
@@ -797,7 +604,10 @@ useEffect(() => {
       await api.post(`/meetings/${meetingId}/join`, { displayName });
 
       // Init socket and join signaling
-      if (!socketRef.current) initializeSocket();
+      if (!socketRef.current) {
+        initializeSocket();
+        // initializeSfuConnection();
+      }
 
       // prevent background scroll and make full-screen
       try { document.body.style.overflow = 'hidden'; } catch(e){}
@@ -994,9 +804,6 @@ const totalParticipants = participants.length + 1; // +1 for local user
             <div style={{color:'var(--muted)',fontSize:12}}>ID: {meetingId}</div>
             <button className="btn btn-secondary" onClick={copyMeetingLink} style={{padding:'6px 8px'}}>Copy</button>
           </div>
-          {/* <div className={`topology-indicator ${topology}`}>
-            Topology: {topology.toUpperCase()}
-          </div> */}
         </div>
       </div>
 

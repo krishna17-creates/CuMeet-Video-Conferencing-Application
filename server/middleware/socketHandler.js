@@ -68,7 +68,7 @@ const socketHandler = (io, worker) => {
             socket.emit('existing-users', existingUsers);
 
             const producers = [...participants].flatMap(p => [...p.producers.values()]);
-            socket.emit('existing-producers', producers);
+            socket.emit('sfu-existing-producers', producers);
 
             // Add new user and notify others
             participants.add(currentUser);
@@ -193,21 +193,31 @@ const socketHandler = (io, worker) => {
             }
         });
 
+        socket.on('resume-consumer', async ({ consumerId }, callback) => {
+      if (!currentRoomId) return;
+      const room = rooms.get(currentRoomId);
+      const participant = room && [...room.participants].find(p => p.socketId === socket.id);
+      const consumer = participant && participant.consumers.get(consumerId);
+
+      if (!consumer) {
+        console.error(`resume-consumer: consumer with id "${consumerId}" not found`);
+      return;
+   _    }
+
+      try {
+        await consumer.resume();
+        if (callback) callback(); // Acknowledge the client
+      } catch (error) {
+        console.error(`Error resuming consumer ${consumerId}:`, error);
+      }
+    });
+    // --- End of new handler ---
+
         socket.on('disconnect', () => {
             console.log(`Socket disconnected: ${socket.id}`);
             leaveRoom();
         });
 
-        // --- P2P signaling relay ---
-        // Forward 'signal' messages between peers to support simple-peer negotiation
-        socket.on('signal', ({ targetSocketId, signal, userId }) => {
-            if (!targetSocketId) return;
-            // Log and forward the signal to the target socket
-            try {
-                console.log(`Relaying signal from ${socket.id} to ${targetSocketId} (fromUserId=${userId})`);
-            } catch (e) {}
-            io.to(targetSocketId).emit('signal', { signal, fromSocketId: socket.id, fromUserId: userId });
-        });
     });
 };
 
