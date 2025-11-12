@@ -1258,57 +1258,26 @@ const consumeSfuStream = useCallback(async ({ producerId, userId, userName, kind
 
 // Remote Video Component
 // Remote Video Component
-// Remote Video Component
 const RemoteVideo = ({ participant }) => {
   const videoRef = useRef();
-  const audioRef = useRef();
 
-  // This useEffect will now re-run whenever:
-  // 1. The participant's stream object is first created.
-  // 2. The number of tracks in that stream changes (i.e., video is added after audio).
+  // This hook will now run correctly when the stream is first created (with audio)
+  // and again when it's replaced (with audio + video).
   useEffect(() => {
-    // Log when this effect runs
-    console.log(`[RemoteVideo] useEffect running for ${participant.userName}. Total tracks: ${participant.stream.getTracks().length}`);
+    console.log(`[RemoteVideo] useEffect running for ${participant.userName}. Stream:`, participant.stream);
     
-    const stream = participant.stream;
-    if (!stream) return;
-
-    // Get all tracks
-    const videoTrack = stream.getVideoTracks()[0];
-    const audioTrack = stream.getAudioTracks()[0];
-
-    // --- Handle Video Track ---
-    if (videoTrack) {
-      if (videoRef.current) {
-        // Create a new, separate stream just for the video track
-        const videoStream = new MediaStream([videoTrack]);
-        videoRef.current.srcObject = videoStream;
-        videoRef.current.play().catch(e => console.warn("[RemoteVideo] Video autoplay failed", e));
-        console.log(`[RemoteVideo] Attached video track for ${participant.userName}`);
-      }
-    } else {
-      // No video track, clear the element
-      if (videoRef.current) videoRef.current.srcObject = null;
+    if (participant.stream && videoRef.current) {
+      // Attach the stream (which has both audio and video) directly
+      videoRef.current.srcObject = participant.stream;
+      
+      // Attempt to play.
+      videoRef.current.play().catch(e => {
+        console.warn(`[RemoteVideo] Autoplay was prevented for ${participant.userName}.`, e.name);
+        // This is a common browser restriction.
+        // The user may need to click the screen to enable audio.
+      });
     }
-
-    // --- Handle Audio Track ---
-    if (audioTrack) {
-      if (audioRef.current) {
-        // Create a new, separate stream just for the audio track
-        const audioStream = new MediaStream([audioTrack]);
-        audioRef.current.srcObject = audioStream;
-        audioRef.current.play().catch(e => console.warn("[RemoteVideo] Audio autoplay failed", e));
-        console.log(`[RemoteVideo] Attached audio track for ${participant.userName}`);
-      }
-    } else {
-      // No audio track, clear the element
-      if (audioRef.current) audioRef.current.srcObject = null;
-    }
-
-    // This is the key:
-    // By listening to getTracks().length, React knows to re-run this
-    // function when you add the video track to the stream.
-  }, [participant.stream, participant.stream.getTracks().length]);
+  }, [participant.stream]); // Depend only on the stream object itself
 
   return (
     <div className="video-container remote-video">
@@ -1316,11 +1285,10 @@ const RemoteVideo = ({ participant }) => {
         ref={videoRef}
         autoPlay
         playsInline
-        muted // Mute the video element, audio is handled by the audio element
+        // NOTE: We DO NOT MUTE the remote stream, because we want to hear the user.
         className="video-stream"
       />
-      {/* Separate, non-visible audio element for remote audio */}
-      <audio ref={audioRef} autoPlay />
+      {/* No separate audio element needed */}
 
       <div className="video-overlay">
         <span className="participant-name">{participant.userName}</span>
