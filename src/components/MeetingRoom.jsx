@@ -472,72 +472,87 @@ const MeetingRoom = () => {
     );
   }, [meetingId]);
 
-  const consumeSfuStream = useCallback(
-    async ({ producerId, userId, userName, kind }) => {
-      if (!sfuDeviceRef.current || !sfuRecvTransportRef.current) return;
+const consumeSfuStream = useCallback(async ({ producerId, userId, userName, kind }) => {
+    console.log(`%c[SFU] Attempting to consume producer: ${producerId} (kind: ${kind}, user: ${userName})`, 'color: #0088cc');
 
-      const { rtpCapabilities } = sfuDeviceRef.current;
-      if (!socketRef.current) return;
+    if (!sfuDeviceRef.current || !sfuRecvTransportRef.current) {
+      console.error('[SFU] Consume failed: SFU device or receive transport is not ready.');
+      return;
+    }
 
-      socketRef.current.emit(
-        "consume",
-        {
-          rtpCapabilities,
-          producerId,
-          transportId: sfuRecvTransportRef.current.id,
-        },
-        async (params) => {
-          if (params.error) {
-            return console.error("Cannot consume", params.error);
-          }
+    const { rtpCapabilities } = sfuDeviceRef.current;
+    if (!socketRef.current) {
+      console.error('[SFU] Consume failed: Socket is not connected.');
+      return;
+    }
 
-          const consumer = await sfuRecvTransportRef.current.consume(params);
-          sfuConsumersRef.current.set(consumer.id, consumer);
+    const transportId = sfuRecvTransportRef.current.id;
+    console.log(`[SFU] Emitting 'consume' to server for producer ${producerId} on transport ${transportId}`);
 
-          // The server should tell the client to resume the consumer
-          // For simplicity, we do it here, but a server-side 'resume' event is better.
-          socketRef.current.emit("resume-consumer", {
-            consumerId: consumer.id,
-          });
+    // This is the async callback we need to wrap
+    socketRef.current.emit('consume', { rtpCapabilities, producerId, transportId }, async (params) => {
+      try {
+        console.log(`[SFU] Server sent back 'consume' params for ${producerId}:`, params);
 
-          const { track } = consumer;
-
-          setParticipants((prev) => {
-            const existingParticipant = prev.find((p) => p.userId === userId);
-            if (existingParticipant) {
-              // Participant exists, add new stream track and update state
-              const newStream = existingParticipant.stream;
-              newStream.addTrack(track);
-              return prev.map((p) =>
-                p.userId === userId
-                  ? {
-                      ...p,
-                      stream: newStream,
-                      audioOn: kind === "audio" ? true : p.audioOn,
-                      videoOn: kind === "video" ? true : p.videoOn,
-                    }
-                  : p
-              );
-            } else {
-              // New participant
-              return [
-                ...prev,
-                {
-                  socketId: `sfu-${userId}`, // Create a stable ID for SFU participants
-                  userId,
-                  userName,
-                  stream: new MediaStream([track]),
-                  audioOn: kind === "audio",
-                  videoOn: kind === "video",
-                },
-              ];
-            }
-          });
+        if (params.error) {
+          console.error(`[SFU] Server 'consume' error for ${producerId}:`, params.error);
+          return;
         }
-      );
-    },
-    []
-  );
+
+        // --- This is the most likely point of failure ---
+        console.log(`[SFU] Calling sfuRecvTransport.consume() for ${producerId}`);
+        const consumer = await sfuRecvTransportRef.current.consume(params);
+        console.log(`[SFU] Consume successful. Created consumer ${consumer.id} for producer ${producerId}`);
+        // --- End of failure point ---
+
+        sfuConsumersRef.current.set(consumer.id, consumer);
+
+        // Resume the consumer on the server
+        console.log(`[SFU] Emitting 'resume-consumer' for ${consumer.id}`);
+        socketRef.current.emit('resume-consumer', { consumerId: consumer.id });
+
+        const { track } = consumer;
+        console.log(`[SFU] Got track ${track.kind} (${track.id}) for consumer ${consumer.id}`);
+
+        // Update React state
+        console.log(`[SFU] Updating participants state for userId: ${userId}`);
+        setParticipants(prev => {
+          const existingParticipant = prev.find(p => p.userId === userId);
+          
+          if (existingParticipant) {
+            console.log(`[SFU] State: Adding track to existing participant ${userName}`);
+            const newStream = existingParticipant.stream;
+            newStream.addTrack(track);
+            
+            return prev.map(p => 
+              p.userId === userId 
+                ? { 
+                    ...p, 
+                    stream: newStream,
+                    audioOn: (kind === 'audio' ? true : p.audioOn),
+                    videoOn: (kind === 'video' ? true : p.videoOn),
+                  } 
+                : p
+            );
+          } else {
+            console.log(`[SFU] State: Creating new participant ${userName} with first track`);
+            return [...prev, {
+              socketId: `sfu-${userId}`, // Create a stable ID for SFU participants
+              userId,
+              userName,
+              stream: new MediaStream([track]),
+              audioOn: kind === 'audio',
+              videoOn: kind === 'video',
+            }];
+          }
+        });
+        console.log(`[SFU] Participant state update complete for ${userId}`);
+
+      } catch (error) {
+        console.error(`[SFU] CRITICAL FAILURE in consume callback for producer ${producerId}:`, error);
+      }
+    });
+  }, []);
 
   const destroySfuConnection = useCallback(() => {
     console.log("Tearing down SFU connection.");
@@ -592,74 +607,72 @@ const MeetingRoom = () => {
   }, []);
 
   const handleDeviceChange = async () => {
-    console.log("Applying new devices...");
-    try {
-      // 1. Get a new stream with the new device IDs
-      // We use initializeMedia's logic but don't set state yet
-      const videoConstraints = selectedCameraId
-        ? {
-            deviceId: { exact: selectedCameraId },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          }
-        : {
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            facingMode: "user",
-          };
-      const audioConstraints = selectedMicId
-        ? {
-            deviceId: { exact: selectedMicId },
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          }
-        : {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          };
+  console.log('Applying new devices...');
+  try {
+   // 1. Get a new stream with the new device IDs
+   // We use initializeMedia's logic but don't set state yet
+   const videoConstraints = selectedCameraId
+    ? { deviceId: { exact: selectedCameraId }, width: { ideal: 1280 }, height: { ideal: 720 } }
+    : { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' };
+   const audioConstraints = selectedMicId
+    ? { deviceId: { exact: selectedMicId }, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    : { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 
-      const newStream = await navigator.mediaDevices.getUserMedia({
-        video: videoConstraints,
-        audio: audioConstraints,
-      });
+   console.log('[DeviceChange] Getting new media with constraints:', { video: videoConstraints, audio: audioConstraints });
+   const newStream = await navigator.mediaDevices.getUserMedia({ 
+    video: videoConstraints, 
+    audio: audioConstraints 
+   });
+   console.log('[DeviceChange] Got new stream:', newStream.id);
 
-      // Get new tracks
-      const newAudioTrack = newStream.getAudioTracks()[0];
-      const newVideoTrack = newStream.getVideoTracks()[0];
+   // Get new tracks
+   const newAudioTrack = newStream.getAudioTracks()[0];
+   const newVideoTrack = newStream.getVideoTracks()[0];
+   console.log('[DeviceChange] New tracks:', { audio: newAudioTrack?.label, video: newVideoTrack?.label });
 
-      const audioProducer = sfuProducersRef.current.get("audio");
-      if (audioProducer && newAudioTrack)
-        await audioProducer.replaceTrack({ track: newAudioTrack });
+   const audioProducer = sfuProducersRef.current.get('audio');
+   if (audioProducer && newAudioTrack) {
+    console.log('[DeviceChange] Replacing audio track...');
+    await audioProducer.replaceTrack({ track: newAudioTrack });
+    console.log('[DeviceChange] Audio track replaced.');
+   }
+   
+   const videoProducer = sfuProducersRef.current.get('video');
+   if (videoProducer && newVideoTrack) {
+    console.log('[DeviceChange] Replacing video track...');
+    await videoProducer.replaceTrack({ track: newVideoTrack });
+    console.log('[DeviceChange] Video track replaced.');
+   }
 
-      const videoProducer = sfuProducersRef.current.get("video");
-      if (videoProducer && newVideoTrack)
-        await videoProducer.replaceTrack({ track: newVideoTrack });
+   // 3. Update local stream ref with the new stream
+   // Stop the OLD stream tracks
+   if (localStreamRef.current) {
+    console.log('[DeviceChange] Stopping old stream tracks...');
+    localStreamRef.current.getTracks().forEach(track => track.stop());
+   }
+   
+   // 4. Apply new stream
+   localStreamRef.current = newStream;
+   if (localVideoRef.current) {
+    localVideoRef.current.srcObject = newStream;
+   }
+   
+   // new tracks respect current mute state
+   if (newAudioTrack) newAudioTrack.enabled = isAudioOn;
+   if (newVideoTrack) newVideoTrack.enabled = isVideoOn;
 
-      // 3. Update local stream ref with the new stream
-      // Stop the OLD stream tracks
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach((track) => track.stop());
-      }
+   console.log('[DeviceChange] Devices updated successfully');
+   setShowSettings(false); // Close settings panel
 
-      // 4. Apply new stream
-      localStreamRef.current = newStream;
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = newStream;
-      }
-
-      // new tracks respect current mute state
-      newAudioTrack.enabled = isAudioOn;
-      newVideoTrack.enabled = isVideoOn;
-
-      console.log("Devices updated successfully");
-      setShowSettings(false); // Close settings panel
-    } catch (err) {
-      console.error("Failed to apply new devices:", err);
-      setError("Failed to switch devices. Please check permissions.");
-    }
-  };
+  } catch (err) {
+   console.error('[DeviceChange] FAILED to apply new devices:', err);
+   // Log the error name specifically for mobile debugging
+   if (err && err.name) {
+    console.error('[DeviceChange] Error name:', err.name);
+   }
+   setError('Failed to switch devices. Please check permissions.');
+  }
+ };
 
   const shareScreen = useCallback(async () => {
     try {
