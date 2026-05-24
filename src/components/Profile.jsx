@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/axios';
-import { FiUser, FiMail, FiLock, FiSave, FiEdit3 } from 'react-icons/fi';
+import { FiUser, FiMail, FiLock, FiSave, FiEdit3, FiVideo, FiCalendar, FiClock } from 'react-icons/fi';
 
 const Profile = () => {
-  const { user } = useAuth();
+  const { user, updateUser } = useAuth();
   const [profileData, setProfileData] = useState({
     name: '',
     email: '',
@@ -17,16 +17,38 @@ const Profile = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [activeTab, setActiveTab] = useState('profile');
+  const [meetingStats, setMeetingStats] = useState({
+    hosted: 0,
+    attended: 0,
+    minutes: 0
+  });
 
   useEffect(() => {
     if (user) {
-      setProfileData({
-        ...profileData,
+      setProfileData((current) => ({
+        ...current,
         name: user.name,
         email: user.email
-      });
+      }));
     }
   }, [user]);
+
+  useEffect(() => {
+    const fetchMeetingStats = async () => {
+      try {
+        const response = await api.get('/meetings?limit=100');
+        const meetings = response.data.meetings || [];
+        const hosted = meetings.filter((meeting) => meeting.host?._id === user?.id).length;
+        const attended = meetings.length;
+        const minutes = meetings.reduce((total, meeting) => total + (Number(meeting.duration) || 0), 0);
+        setMeetingStats({ hosted, attended, minutes });
+      } catch (error) {
+        console.error('Failed to load profile meeting stats:', error);
+      }
+    };
+
+    if (user?.id) fetchMeetingStats();
+  }, [user?.id]);
 
   const handleChange = (e) => {
     setProfileData({
@@ -46,11 +68,11 @@ const Profile = () => {
         name: profileData.name,
         email: profileData.email
       });
-      
+      updateUser(response.data.user);
       setSuccess('Profile updated successfully!');
       setIsEditing(false);
     } catch (error) {
-      setError(error.response?.data?.message || 'Failed to update profile');
+      setError(error.response?.data?.message || error.response?.data?.error?.message || 'Failed to update profile');
     } finally {
       setLoading(false);
     }
@@ -87,7 +109,7 @@ const Profile = () => {
         confirmPassword: ''
       });
     } catch (error) {
-      setError(error.response?.data?.message || 'Failed to update password');
+      setError(error.response?.data?.message || error.response?.data?.error?.message || 'Failed to update password');
     } finally {
       setLoading(false);
     }
@@ -276,16 +298,19 @@ const Profile = () => {
           <h3>Account Statistics</h3>
           <div className="stats-grid">
             <div className="stat-item">
-              <div className="stat-value">0</div>
+              <FiVideo className="stat-item-icon" />
+              <div className="stat-value">{meetingStats.hosted}</div>
               <div className="stat-label">Meetings Hosted</div>
             </div>
             <div className="stat-item">
-              <div className="stat-value">0</div>
+              <FiCalendar className="stat-item-icon" />
+              <div className="stat-value">{meetingStats.attended}</div>
               <div className="stat-label">Meetings Attended</div>
             </div>
             <div className="stat-item">
-              <div className="stat-value">{user?.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'Today'}</div>
-              <div className="stat-label">Member Since</div>
+              <FiClock className="stat-item-icon" />
+              <div className="stat-value">{meetingStats.minutes}</div>
+              <div className="stat-label">Scheduled Minutes</div>
             </div>
           </div>
         </div>

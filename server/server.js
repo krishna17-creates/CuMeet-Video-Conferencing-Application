@@ -34,6 +34,19 @@ const authRoutes = require('./routes/auth');
 const meetingRoutes = require('./routes/meetings');
 const socketHandler = require('./middleware/socketHandler');
 
+// Import middleware and utilities
+const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
+const { sanitizeInput } = require('./middleware/requestValidator');
+const { createLogger } = require('./utils/logger');
+const { rateLimiter } = require('./utils/security');
+const { RATE_LIMIT } = require('./config/constants');
+
+const logger = createLogger('Server');
+
+if (process.env.NODE_ENV === 'production' && !process.env.MEDIASOUP_ANNOUNCED_IP) {
+  console.warn('[SFU] MEDIASOUP_ANNOUNCED_IP is not set. Remote video will not work on most hosted deployments unless the SFU exposes a public WebRTC IP/port range.');
+}
+
 const app = express();
 
 // --- CRITICAL: Add a global request logger at the VERY TOP ---
@@ -90,7 +103,7 @@ const corsOptions = {
     return callback(new Error('Not allowed by CORS'));
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-request-id'],
   credentials: true // allow cookies/credentials if needed
 };
 
@@ -109,6 +122,22 @@ app.options('*', cors(corsOptions));
 // 2. Then, apply CORS, and JSON parsing for all other requests.
 app.use(cors(corsOptions));
 app.use(express.json());
+
+// --- PHASE 3: Security & Validation Middleware ---
+app.use(sanitizeInput); // Sanitize all inputs
+app.use(rateLimiter(RATE_LIMIT.API_REQUESTS.windowMs, RATE_LIMIT.API_REQUESTS.maxRequests)); // Rate limiting
+
+// Request/Response logging
+app.use((req, res, next) => {
+  const startTime = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - startTime;
+    logger.info(`${req.method} ${req.path} - ${res.statusCode}`, { duration, ip: req.ip });
+  });
+  next();
+});
+
+// --- End Security & Validation ---
 
 // Connect to MongoDB
 const connectDB = async () => {
@@ -139,12 +168,19 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'Server is running!' });
 });
 
+// --- PHASE 3: Error Handling ---
+app.use(notFoundHandler); // 404 handler
+app.use(errorHandler); // Centralized error handler
+// --- End Error Handling ---
+
 // --- Mediasoup Worker ---
 let worker;
 const createWorker = async () => {
   try {
     worker = await mediasoup.createWorker({
-      logLevel: 'warn'
+      logLevel: 'warn',
+      rtcMinPort: Number(process.env.MEDIASOUP_MIN_PORT) || 40000,
+      rtcMaxPort: Number(process.env.MEDIASOUP_MAX_PORT) || 49999,
     });
     console.log(`✅ Mediasoup worker started with pid ${worker.pid}`);
     worker.on('died', () => {

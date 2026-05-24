@@ -14,7 +14,8 @@ const Navbar = () => {
 
   const handleLogout = () => {
     logout();
-    navigate('/');
+    // Use replace so forward button won't work
+    navigate('/', { replace: true });
   };
 
   const isActive = (path) => {

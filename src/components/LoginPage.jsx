@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { FiMail, FiLock, FiEye, FiEyeOff } from 'react-icons/fi';
+import { FiMail, FiLock, FiEye, FiEyeOff, FiAlertCircle } from 'react-icons/fi';
+import '../styles/AuthPages.css';
 
 const LoginPage = () => {
   const [formData, setFormData] = useState({
@@ -20,6 +21,8 @@ const LoginPage = () => {
       ...formData,
       [e.target.name]: e.target.value
     });
+    // Clear error when user starts typing
+    if (error) setError('');
   };
 
   const handleSubmit = async (e) => {
@@ -40,8 +43,27 @@ const LoginPage = () => {
 
   return (
     <div className="auth-page">
-      <div className="container-sm">
-        <div className="auth-card card fade-in">
+      {/* Animated Background Elements */}
+      <div className="auth-background">
+        <div className="floating-shape shape-1"></div>
+        <div className="floating-shape shape-2"></div>
+        <div className="floating-shape shape-3"></div>
+        <div className="floating-shape shape-4"></div>
+        <div className="floating-shape shape-5"></div>
+        <div className="floating-shape shape-6"></div>
+      </div>
+
+      {/* Logo/Brand */}
+      <Link to="/" className="auth-logo">
+        <div className="cumeet-logo">
+          <span className="logo-c">C</span>
+          <span className="logo-u">U</span>
+          <span className="logo-meet">MEET</span>
+        </div>
+      </Link>
+
+      <div className="auth-container">
+        <div className="auth-card">
           <div className="auth-header">
             <h1>Welcome Back</h1>
             <p>Sign in to your Cumeet account</p>
@@ -49,7 +71,8 @@ const LoginPage = () => {
 
           {error && (
             <div className="alert alert-error">
-              {error}
+              <FiAlertCircle />
+              <span>{error}</span>
             </div>
           )}
 
@@ -75,7 +98,7 @@ const LoginPage = () => {
                 <FiLock className="form-icon" />
                 Password
               </label>
-              <div className="password-input-container">
+              <div className="password-input-wrapper">
                 <input
                   type={showPassword ? 'text' : 'password'}
                   name="password"
@@ -89,6 +112,7 @@ const LoginPage = () => {
                   type="button"
                   className="password-toggle"
                   onClick={() => setShowPassword(!showPassword)}
+                  aria-label="Toggle password visibility"
                 >
                   {showPassword ? <FiEyeOff /> : <FiEye />}
                 </button>
@@ -100,7 +124,14 @@ const LoginPage = () => {
               className="btn btn-primary auth-submit"
               disabled={loading}
             >
-              {loading ? 'Signing In...' : 'Sign In'}
+              {loading ? (
+                <>
+                  <span className="spinner-small"></span>
+                  Signing In...
+                </>
+              ) : (
+                'Sign In'
+              )}
             </button>
           </form>
 
@@ -110,6 +141,9 @@ const LoginPage = () => {
               <Link to="/signup" className="auth-link">
                 Sign up here
               </Link>
+            </p>
+            <p className="auth-home-link">
+              <Link to="/">← Back to Home</Link>
             </p>
           </div>
         </div>

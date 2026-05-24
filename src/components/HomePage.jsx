@@ -1,60 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { FiVideo, FiCalendar, FiUsers, FiShield, FiChevronLeft, FiChevronRight, FiArrowLeft, FiArrowRight } from 'react-icons/fi';
+import { FiVideo, FiCalendar, FiUsers, FiShield, FiMail, FiPhone, FiMapPin } from 'react-icons/fi';
 import { FaUserTie } from 'react-icons/fa';
 import '../styles/HomePage.css';
 
 
 const HomePage = () => {
- const [currentImageIndex, setCurrentImageIndex] = useState(0);
- const heroImages = [
-  {
-   src: 'unsplash',
-   tagline: 'Meet smarter. Connect faster.',
-   description: 'Built for seamless collaboration with Zoom-level performance and complete data ownership.',
-  },
-  {
-   src: 'https://images.unsplash.com/photo-1596551820464-9665e771c52d?q=80&w=2940&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D',
-   tagline: 'Your meetings. Your control.',
-   description: 'Experience enterprise-grade video, chat, and scheduling — fully private and customizable.',
-  },
-  {
-   src: 'https://images.unsplash.com/photo-1522204523234-8729aa6ed03d?q=80&w=2940&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D',
-   tagline: 'From small talks to global meets.',
-   description: 'Scales effortlessly from P2P calls to SFU-powered conferences with crystal clarity.',
-  },
-  {
-   src: 'https://images.unsplash.com/photo-1620288672545-fb40f7d54401?q=80&w=2940&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D',
-   tagline: 'One platform. Infinite collaboration.',
-   description: 'Video, chat, whiteboard, and calendar — all unified in a single modern interface.',
-  },
-  {
-   src: 'https://images.unsplash.com/photo-1549692520-acc6669e2fde?q=80&w=2890&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D',
-   tagline: 'Open source. Open communication.',
-   description: 'Cumeet empowers teams to host, modify, and innovate without boundaries.',
-  },
- ];
-
  useEffect(() => {
   const main = document.querySelector('.home-page');
   if (main) {
    main.classList.add('loaded');
   }
-
-  const interval = setInterval(() => {
-   setCurrentImageIndex((prevIndex) => (prevIndex + 1) % heroImages.length);
-  }, 8000); // Change image every 8 seconds
-
-  return () => clearInterval(interval);
- }, [heroImages.length]);
-
- const handlePrevImage = () => {
-  setCurrentImageIndex((prevIndex) => (prevIndex - 1 + heroImages.length) % heroImages.length);
- };
-
- const handleNextImage = () => {
-  setCurrentImageIndex((prevIndex) => (prevIndex + 1) % heroImages.length);
- };
+ }, []);
 
  // Calendar data - representing different types/numbers of meetings
  const getCalendarDayClass = (day) => {
@@ -82,46 +39,86 @@ const HomePage = () => {
       </div>
      </Link>
      <nav className="main-nav">
-      <Link to="/">Connect </Link>
-      <Link to="/">Contact</Link>
+      <Link to="/contact">Contact Us</Link>
       <Link to="/login" className="btn btn-secondary btn-small">Sign In</Link>
       <Link to="/signup" className="btn btn-primary btn-small">Get Started</Link>
      </nav>
     </div>
    </header>
 
-   {/* Hero Section */}
+   {/* Hero Section with CSS Vector Illustration */}
    <section className="hero-section">
-    <div className="hero-image-scroller">
-     {heroImages.map((image, index) => (
-      <div
-       key={index}
-       className={`hero-image-slide ${index === currentImageIndex ? 'active' : ''}`}
-       style={{ backgroundImage: `url(${image.src})` }}
-      ></div>
-     ))}
-     <button className="scroll-arrow left" onClick={handlePrevImage}><FiArrowLeft /></button>
-     <button className="scroll-arrow right" onClick={handleNextImage}><FiArrowRight /></button>
-    </div>
-
     <div className="container hero-content-wrapper">
      <div className="hero-content">
       <h1 className="hero-title">
        Connect Seamlessly with <span className="text-primary animated-cumeet">CUMEET</span>
       </h1>
-      <p className="hero-dynamic-tagline">
-       {heroImages[currentImageIndex].tagline}
-      </p>
       <p className="hero-description">
-       {heroImages[currentImageIndex].description}
+       Experience enterprise-grade video conferencing with crystal clear quality, 
+       powerful collaboration tools, and complete data ownership. Built for teams that value privacy and performance.
       </p>
       <div className="hero-actions">
        <Link to="/signup" className="btn btn-primary btn-large">
         <FiVideo /> Start Free Meeting
        </Link>
-       <Link to="/login" className="btn btn-secondary btn-large">
-        Learn More
+       <Link to="/contact" className="btn btn-secondary btn-large">
+        Contact Us
        </Link>
+      </div>
+     </div>
+     
+     {/* CSS Vector Illustration - Video Conference */}
+     <div className="hero-illustration">
+      <div className="illustration-wrapper">
+       {/* Main meeting screen */}
+       <div className="meeting-screen">
+        <div className="screen-header">
+         <div className="screen-dot"></div>
+         <div className="screen-dot"></div>
+         <div className="screen-dot"></div>
+        </div>
+        <div className="participants-grid">
+         <div className="participant participant-1">
+          <div className="avatar"></div>
+          <div className="audio-wave wave-1"></div>
+          <div className="audio-wave wave-2"></div>
+          <div className="audio-wave wave-3"></div>
+         </div>
+         <div className="participant participant-2">
+          <div className="avatar"></div>
+          <div className="audio-wave wave-1"></div>
+          <div className="audio-wave wave-2"></div>
+          <div className="audio-wave wave-3"></div>
+         </div>
+         <div className="participant participant-3">
+          <div className="avatar"></div>
+          <div className="audio-wave wave-1"></div>
+          <div className="audio-wave wave-2"></div>
+          <div className="audio-wave wave-3"></div>
+         </div>
+         <div className="participant participant-4">
+          <div className="avatar"></div>
+          <div className="audio-wave wave-1"></div>
+          <div className="audio-wave wave-2"></div>
+          <div className="audio-wave wave-3"></div>
+         </div>
+        </div>
+       </div>
+       
+       {/* Floating elements */}
+       <div className="floating-icon icon-1">
+        <FiVideo />
+       </div>
+       <div className="floating-icon icon-2">
+        <FiUsers />
+       </div>
+       <div className="floating-icon icon-3">
+        <FiCalendar />
+       </div>
+       <div className="floating-notification">
+        <div className="notif-dot"></div>
+        <span>Meeting starts in 5 min</span>
+       </div>
       </div>
      </div>
     </div>
@@ -252,6 +249,37 @@ const HomePage = () => {
      </div>
     </div>
    </section>
+
+   {/* Footer */}
+   <footer className="home-footer">
+    <div className="container footer-content">
+     <div className="footer-section">
+      <div className="cumeet-logo">
+       <span className="logo-c">C</span>
+       <span className="logo-u">U</span>
+       <span className="logo-meet">MEET</span>
+      </div>
+      <p>Connect seamlessly with CUMEET - Your trusted video conferencing platform.</p>
+     </div>
+     
+     <div className="footer-section">
+      <h4>Contact</h4>
+      <p><FiMail /> support@cumeet.com</p>
+      <p><FiPhone /> +1 (234) 567-890</p>
+      <p><FiMapPin /> San Francisco, CA 94105</p>
+     </div>
+     
+     <div className="footer-section">
+      <h4>Quick Links</h4>
+      <Link to="/contact">Contact Us</Link>
+      <Link to="/login">Sign In</Link>
+      <Link to="/signup">Get Started</Link>
+     </div>
+    </div>
+    <div className="footer-bottom">
+     <p>&copy; {new Date().getFullYear()} CUMEET. All rights reserved.</p>
+    </div>
+   </footer>
   </main>
  );
 };

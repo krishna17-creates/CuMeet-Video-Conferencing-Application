@@ -7,9 +7,9 @@ CLEAN, CORRECTED STYLES FOR meetingRoom.css
 
 /* --- Base Variables --- */
 :root {
-  --primary-bg: #1a1a2e;
-  --secondary-bg: #16213e;
-  --accent: #0ea5e9;
+  --primary-bg: #101114;
+  --secondary-bg: #1b1d22;
+  --accent: #14b8a6;
   --text: #e2e8f0;
   --muted: #94a3b8;
   --danger: #ef4444;
@@ -31,6 +31,13 @@ CLEAN, CORRECTED STYLES FOR meetingRoom.css
   flex-direction: column;
   overflow: hidden;
   z-index: 1000;
+}
+
+.meeting-content-wrapper {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 .meeting-header {
@@ -103,8 +110,8 @@ CLEAN, CORRECTED STYLES FOR meetingRoom.css
 /* --- Video Container (Used by all videos) --- */
 .video-container {
   position: relative;
-  background: #000;
-  border-radius: 12px;
+  background: #09090b;
+  border-radius: 8px;
   overflow: hidden;
   aspect-ratio: 16/9;
   width: 100%;
@@ -112,6 +119,9 @@ CLEAN, CORRECTED STYLES FOR meetingRoom.css
   align-items: center;
   justify-content: center;
   border: 2px solid rgba(255, 255, 255, 0.05);
+}
+.video-container.local-video {
+  border-color: rgba(20, 184, 166, 0.45);
 }
 .video-stream {
   width: 100%;
@@ -137,11 +147,33 @@ CLEAN, CORRECTED STYLES FOR meetingRoom.css
 .participant-name {
   background: rgba(0, 0, 0, 0.75);
   padding: 6px 12px;
-  border-radius: 8px;
+  border-radius: 6px;
   font-weight: 600;
   color: var(--text);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
   backdrop-filter: blur(4px);
+}
+.video-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    linear-gradient(135deg, rgba(20, 184, 166, 0.18), rgba(245, 158, 11, 0.14)),
+    #15171c;
+}
+.video-placeholder span {
+  width: clamp(64px, 12vw, 120px);
+  height: clamp(64px, 12vw, 120px);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.12);
+  color: white;
+  font-size: clamp(2rem, 5vw, 4rem);
+  font-weight: 800;
+  border: 1px solid rgba(255, 255, 255, 0.16);
 }
 .video-controls {
   display: flex;
@@ -178,7 +210,7 @@ CLEAN, CORRECTED STYLES FOR meetingRoom.css
   padding: 1rem;
   background: var(--secondary-bg);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 8px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
   z-index: 100;
 }
@@ -414,7 +446,7 @@ FORM & PRE-JOIN STYLES
   gap: 24px;
   background: var(--secondary-bg);
   padding: 24px;
-  border-radius: 16px;
+  border-radius: 8px;
   border: 1px solid var(--border);
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
 }
@@ -470,13 +502,6 @@ FORM & PRE-JOIN STYLES
   line-height: 1.5;
 }
 
-/* --- DEBUGGING: ADD THIS --- */
-.meeting-room .video-stream {
- border: 4px solid red !important;
- background-color: black;
-}
-
-
 /* ========================================
 RESPONSIVE STYLES
 ========================================
@@ -519,6 +544,7 @@ RESPONSIVE STYLES
     bottom: 1rem;
     padding: 0.75rem;
     gap: 0.5rem;
+    max-width: calc(100vw - 1rem);
   }
   .control-btn {
     min-width: 40px;

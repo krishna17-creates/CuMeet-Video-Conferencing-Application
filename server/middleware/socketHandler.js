@@ -1,232 +1,357 @@
-const mediasoup = require('mediasoup');
+/**
+ * Socket Handler (Refactored)
+ * Uses roomService and sfuService for clean separation of concerns
+ */
+
+const roomService = require('../services/roomService');
+const sfuService = require('../services/sfuService');
 const { mediaCodecs } = require('../sfu/mediaCodecs');
 
-const rooms = new Map();
-
-/**
- * Manages all socket.io events for the application.
- * @param {import('socket.io').Server} io - The Socket.IO server instance.
- * @param {mediasoup.Worker} worker - The Mediasoup worker instance.
- */
 const socketHandler = (io, worker) => {
-    const createRouter = async (roomId) => {
-        const router = await worker.createRouter({ mediaCodecs });
-        rooms.set(roomId, {
-            router,
-            participants: new Set()
-        });
-        return router;
-    };
+  io.on('connection', (socket) => {
+    console.log(`[SocketHandler] User connected: ${socket.id}`);
 
-    io.on('connection', (socket) => {
-        console.log(`Socket connected: ${socket.id}`);
-        let currentRoomId = null;
+    let currentRoomId = null;
+    let currentParticipant = null;
 
-        const leaveRoom = () => {
-            if (!currentRoomId) return;
+    // ========== ROOM MANAGEMENT ==========
 
-            const roomData = rooms.get(currentRoomId);
-            if (!roomData) return;
+    socket.on('join-room', async ({ roomId, userId, userName }) => {
+      try {
+        currentRoomId = roomId;
 
-            const { participants, router } = roomData;
-            const participant = [...participants].find(p => p.socketId === socket.id);
+        // Get or create room
+        await roomService.getOrCreateRoom(
+          roomId,
+          worker,
+          mediaCodecs
+        );
 
-            if (participant) {
-                console.log(`Participant ${participant.userName} leaving room ${currentRoomId}`);
-                // Clean up transports for this participant
-                participant.transports?.forEach(transport => transport.close());
-                participants.delete(participant);
-
-                socket.to(currentRoomId).emit('user-left', { socketId: socket.id, userId: participant.userId });
-
-                if (participants.size === 0) {
-                    console.log(`Room ${currentRoomId} is empty, closing router.`);
-                    router.close();
-                    rooms.delete(currentRoomId);
-                }
-            }
+        // Create participant object
+        const participant = {
+          socketId: socket.id,
+          userId,
+          userName,
+          transports: new Map(),
+          producers: new Map(),
+          consumers: new Map(),
         };
 
-        socket.on('join-room', async ({ roomId, userId, userName }) => {
-            currentRoomId = roomId;
-            if (!roomId || !userId) return;
+        currentParticipant = participant;
+        roomService.addParticipant(roomId, participant);
+        socket.join(roomId);
 
-            // Get or create the room
-            if (!rooms.has(roomId)) {
-                await createRouter(roomId);
-            }
-            const room = rooms.get(roomId);
-            if (!room) return; // Should not happen
+        // Send existing users to new participant
+        const existingUsers = roomService
+          .getParticipants(roomId)
+          .filter((p) => p.socketId !== socket.id)
+          .map((p) => ({
+            socketId: p.socketId,
+            userId: p.userId,
+            userName: p.userName,
+          }));
 
-            const { participants } = room;
+        socket.emit('existing-users', existingUsers);
 
-            // Prepare user data
-            const currentUser = { socketId: socket.id, userId, userName, transports: new Map(), producers: new Map(), consumers: new Map() };
+        // Send existing producers to new participant
+        const existingProducers = roomService
+          .getParticipants(roomId)
+          .filter((p) => p.socketId !== socket.id)
+          .flatMap((p) =>
+            [...p.producers.values()].map((prod) => ({
+              producerId: prod.producerId,
+              userId: prod.userId,
+              userName: prod.userName,
+              kind: prod.kind,
+            }))
+          );
 
-            // Send existing users and producers to the new user
-            const existingUsers = [...participants].map(p => ({ socketId: p.socketId, userId: p.userId, userName: p.userName }));
-            socket.emit('existing-users', existingUsers);
+        socket.emit('sfu-existing-producers', existingProducers);
 
-            const producers = [...participants].flatMap(p => [...p.producers.values()]);
-            socket.emit('sfu-existing-producers', producers);
-
-            // Add new user and notify others
-            participants.add(currentUser);
-            socket.join(roomId);
-            socket.to(roomId).emit('user-joined', {
-                userId,
-                userName,
-                socketId: socket.id
-            });
-
-            // Inform the joining client that the server has finished join processing
-            socket.emit('joined', { roomId, socketId: socket.id });
-
-            console.log(`User ${userName} (${userId}) joined room ${roomId}. New size: ${participants.size}`);
+        // Notify others
+        socket.to(roomId).emit('user-joined', {
+          userId,
+          userName,
+          socketId: socket.id,
         });
 
-        // --- SFU Specific Events ---
+        // Acknowledge join
+        socket.emit('joined', { roomId, socketId: socket.id });
 
-        socket.on('getRouterRtpCapabilities', (roomId, callback) => {
-            const room = rooms.get(roomId);
-            if (room && room.router) {
-                callback(room.router.rtpCapabilities);
-            } else {
-                callback(null); // Explicitly callback with null on failure
-            }
-        });
-
-        socket.on('createWebRtcTransport', async ({ type }, callback) => {
-            if (!currentRoomId) return callback({ error: 'Not in a room' });
-            const room = rooms.get(currentRoomId);
-            if (!room) return callback({ error: 'Room not found' });
-
-            try {
-                const transport = await room.router.createWebRtcTransport({
-                    listenIps: [{ ip: process.env.MEDIASOUP_LISTEN_IP || '127.0.0.1', announcedIp: process.env.MEDIASOUP_ANNOUNCED_IP || null }],
-                    enableUdp: true,
-                    enableTcp: true,
-                    preferUdp: true,
-                });
-
-                const participant = [...room.participants].find(p => p.socketId === socket.id);
-                if (participant) {
-                    participant.transports.set(transport.id, transport);
-                }
-
-                callback({
-                    id: transport.id,
-                    iceParameters: transport.iceParameters,
-                    iceCandidates: transport.iceCandidates,
-                    dtlsParameters: transport.dtlsParameters,
-                });
-            } catch (error) {
-                console.error('Error creating transport:', error);
-                callback({ error: error.message });
-            }
-        });
-
-        socket.on('connectTransport', async ({ transportId, dtlsParameters }, callback) => {
-            if (!currentRoomId) return;
-            const room = rooms.get(currentRoomId);
-            const participant = room && [...room.participants].find(p => p.socketId === socket.id);
-            const transport = participant && participant.transports.get(transportId);
-
-            if (!transport) {
-                console.error(`connectTransport: transport with id "${transportId}" not found`);
-                return;
-            }
-            await transport.connect({ dtlsParameters });
-            callback();
-        });
-
-        socket.on('produce', async ({ transportId, kind, rtpParameters, appData }, callback) => {
-            if (!currentRoomId) return;
-            const room = rooms.get(currentRoomId);
-            const participant = room && [...room.participants].find(p => p.socketId === socket.id);
-            const transport = participant && participant.transports.get(transportId);
-
-            if (!transport) {
-                console.error(`produce: transport with id "${transportId}" not found`);
-                return;
-            }
-
-            const producer = await transport.produce({ kind, rtpParameters, appData });
-            participant.producers.set(producer.id, { producerId: producer.id, userId: participant.userId, userName: participant.userName, kind });
-
-            // Inform other participants
-            socket.to(currentRoomId).emit('new-producer', { producerId: producer.id, socketId: socket.id, userId: participant.userId, userName: participant.userName, kind });
-
-            callback({ id: producer.id });
-        });
-
-        socket.on('consume', async ({ producerId, rtpCapabilities, transportId }, callback) => {
-            if (!currentRoomId) return callback({ error: 'Not in a room' });
-            const room = rooms.get(currentRoomId);
-            if (!room) return callback({ error: 'Room not found' });
-            if (!room.router.canConsume({ producerId, rtpCapabilities })) {
-                console.error('can not consume');
-                return callback({ error: 'Cannot consume' });
-            }
-
-            const participant = [...room.participants].find(p => p.socketId === socket.id);
-            const transport = participant && participant.transports.get(transportId);
-            if (!transport) return callback({ error: 'Transport not found' });
-
-            try {
-                const consumer = await transport.consume({ producerId, rtpCapabilities, paused: false });
-                participant.consumers.set(consumer.id, consumer);
-
-                consumer.on('transportclose', () => {
-                    participant.consumers.delete(consumer.id);
-                });
-
-                consumer.on('producerclose', () => {
-                    participant.consumers.delete(consumer.id);
-                    socket.emit('producer-closed', { producerId });
-                });
-
-                callback({ id: consumer.id, producerId, kind: consumer.kind, rtpParameters: consumer.rtpParameters });
-            } catch (error) {
-                console.error('consume failed', error);
-                return callback({ error: error.message });
-            }
-        });
-
-        socket.on('resume-consumer', async ({ consumerId }, callback) => {
-      if (!currentRoomId) return;
-      const room = rooms.get(currentRoomId);
-      const participant = room && [...room.participants].find(p => p.socketId === socket.id);
-      const consumer = participant && participant.consumers.get(consumerId);
-
-      if (!consumer) {
-        console.error(`resume-consumer: consumer with id "${consumerId}" not found`);
-      return;
-   _    }
-
-      try {
-        await consumer.resume();
-        if (callback) callback(); // Acknowledge the client
+        console.log(
+          `[SocketHandler] User ${userName} joined room ${roomId}`
+        );
       } catch (error) {
-        console.error(`Error resuming consumer ${consumerId}:`, error);
+        console.error('[SocketHandler] Error joining room:', error.message);
+        socket.emit('error', { message: 'Failed to join room' });
       }
     });
-    // --- End of new handler ---
 
-        // --- Chat Message Handler ---
-        socket.on('chat-message', (msg) => {
-            if (currentRoomId) {
-                // Broadcast the message to all other clients in the same room
-                socket.to(currentRoomId).emit('chat-message', msg);
-            }
-        });
+    // ========== SFU: TRANSPORT ==========
 
-        socket.on('disconnect', () => {
-            console.log(`Socket disconnected: ${socket.id}`);
-            leaveRoom();
-        });
-
+    socket.on('getRouterRtpCapabilities', (roomId, callback) => {
+      try {
+        const room = roomService.getRoom(roomId);
+        if (room && room.router) {
+          callback(room.router.rtpCapabilities);
+        } else {
+          callback({ error: 'Room not found' });
+        }
+      } catch (error) {
+        console.error(
+          '[SocketHandler] Error getting router capabilities:',
+          error.message
+        );
+        callback({ error: error.message });
+      }
     });
+
+    socket.on('createWebRtcTransport', async (_payload, callback) => {
+      try {
+        if (!currentRoomId) {
+          return callback({ error: 'Not in a room' });
+        }
+
+        const room = roomService.getRoom(currentRoomId);
+        if (!room) {
+          return callback({ error: 'Room not found' });
+        }
+
+        const { transport, params } = await sfuService.createWebRtcTransport(
+          room.router,
+          process.env.MEDIASOUP_LISTEN_IP,
+          process.env.MEDIASOUP_ANNOUNCED_IP
+        );
+
+        currentParticipant.transports.set(params.id, transport);
+
+        callback(params);
+      } catch (error) {
+        console.error(
+          '[SocketHandler] Error creating transport:',
+          error.message
+        );
+        callback({ error: error.message });
+      }
+    });
+
+    socket.on('connectTransport', async ({ transportId, dtlsParameters }, callback) => {
+      try {
+        const transport = currentParticipant?.transports.get(transportId);
+        if (!transport) {
+          return callback({ error: 'Transport not found' });
+        }
+
+        await sfuService.connectTransport(transport, dtlsParameters);
+        callback();
+      } catch (error) {
+        console.error(
+          '[SocketHandler] Error connecting transport:',
+          error.message
+        );
+        callback({ error: error.message });
+      }
+    });
+
+    // ========== SFU: PRODUCER ==========
+
+    socket.on('produce', async ({ transportId, kind, rtpParameters, appData }, callback) => {
+      try {
+        if (!currentRoomId || !currentParticipant) {
+          return callback({ error: 'Not in a room' });
+        }
+
+        const transport = currentParticipant.transports.get(transportId);
+        if (!transport) {
+          return callback({ error: 'Transport not found' });
+        }
+
+        const producer = await sfuService.produceTrack(
+          transport,
+          kind,
+          rtpParameters,
+          appData
+        );
+
+        // Store producer info
+        currentParticipant.producers.set(producer.id, {
+          producerId: producer.id,
+          producer,
+          userId: currentParticipant.userId,
+          userName: currentParticipant.userName,
+          kind,
+        });
+
+        producer.on('transportclose', () => {
+          currentParticipant?.producers.delete(producer.id);
+          socket.to(currentRoomId).emit('producer-closed', {
+            producerId: producer.id,
+            userId: currentParticipant?.userId,
+            kind,
+          });
+        });
+
+        producer.on('close', () => {
+          currentParticipant?.producers.delete(producer.id);
+          socket.to(currentRoomId).emit('producer-closed', {
+            producerId: producer.id,
+            userId: currentParticipant?.userId,
+            kind,
+          });
+        });
+
+        // Notify others
+        socket.to(currentRoomId).emit('new-producer', {
+          producerId: producer.id,
+          socketId: socket.id,
+          userId: currentParticipant.userId,
+          userName: currentParticipant.userName,
+          kind,
+        });
+
+        callback({ id: producer.id });
+      } catch (error) {
+        console.error('[SocketHandler] Error producing:', error.message);
+        callback({ error: error.message });
+      }
+    });
+
+    // ========== SFU: CONSUMER ==========
+
+    socket.on('consume', async ({ producerId, rtpCapabilities, transportId }, callback) => {
+      try {
+        if (!currentRoomId || !currentParticipant) {
+          return callback({ error: 'Not in a room' });
+        }
+
+        const room = roomService.getRoom(currentRoomId);
+        if (!room) {
+          return callback({ error: 'Room not found' });
+        }
+
+        // Check if can consume
+        if (!sfuService.canConsume(room.router, producerId, rtpCapabilities)) {
+          return callback({ error: 'Cannot consume' });
+        }
+
+        const transport = currentParticipant.transports.get(transportId);
+        if (!transport) {
+          return callback({ error: 'Transport not found' });
+        }
+
+        const consumer = await sfuService.consumeProducer(
+          transport,
+          producerId,
+          rtpCapabilities
+        );
+
+        // Store consumer
+        currentParticipant.consumers.set(consumer.id, consumer);
+
+        // Auto-close on events
+        consumer.on('transportclose', () => {
+          currentParticipant?.consumers.delete(consumer.id);
+        });
+
+        consumer.on('producerclose', () => {
+          currentParticipant?.consumers.delete(consumer.id);
+          socket.emit('producer-closed', { producerId });
+        });
+
+        callback({
+          id: consumer.id,
+          producerId,
+          kind: consumer.kind,
+          rtpParameters: consumer.rtpParameters,
+        });
+      } catch (error) {
+        console.error('[SocketHandler] Error consuming:', error.message);
+        callback({ error: error.message });
+      }
+    });
+
+    socket.on('resume-consumer', async ({ consumerId }, callback) => {
+      try {
+        const consumer = currentParticipant?.consumers.get(consumerId);
+        if (!consumer) {
+          return callback({ error: 'Consumer not found' });
+        }
+
+        await sfuService.resumeConsumer(consumer);
+        if (callback) callback();
+      } catch (error) {
+        console.error('[SocketHandler] Error resuming consumer:', error.message);
+        if (callback) callback({ error: error.message });
+      }
+    });
+
+    // ========== CHAT ==========
+
+    socket.on('chat-message', (msg) => {
+      if (currentRoomId) {
+        socket.to(currentRoomId).emit('chat-message', msg);
+      }
+    });
+
+    socket.on('update-name', ({ name }) => {
+      if (currentParticipant) {
+        currentParticipant.userName = name;
+        if (currentRoomId) {
+          socket.to(currentRoomId).emit('user-name-updated', {
+            socketId: socket.id,
+            userName: name,
+          });
+        }
+      }
+    });
+
+    socket.on('end-room', (callback) => {
+      try {
+        if (!currentRoomId || !currentParticipant) {
+          return callback?.({ error: 'Not in a room' });
+        }
+
+        socket.to(currentRoomId).emit('room-ended', {
+          roomId: currentRoomId,
+          endedBy: currentParticipant.userId,
+          endedByName: currentParticipant.userName,
+        });
+
+        roomService.closeRoom(currentRoomId);
+        callback?.({ success: true });
+      } catch (error) {
+        console.error('[SocketHandler] Error ending room:', error.message);
+        callback?.({ error: error.message });
+      }
+    });
+
+    // ========== DISCONNECT ==========
+
+    socket.on('disconnect', () => {
+      console.log(`[SocketHandler] User disconnected: ${socket.id}`);
+
+      if (currentRoomId && currentParticipant) {
+        // Remove participant
+        const removedParticipant = roomService.removeParticipant(
+          currentRoomId,
+          socket.id
+        );
+
+        if (removedParticipant) {
+          // Notify others
+          socket.to(currentRoomId).emit('user-left', {
+            socketId: socket.id,
+            userId: removedParticipant.userId,
+          });
+
+          // Clean up room if empty
+          if (roomService.isRoomEmpty(currentRoomId)) {
+            roomService.closeRoom(currentRoomId);
+          }
+        }
+      }
+    });
+  });
 };
 
 module.exports = socketHandler;

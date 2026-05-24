@@ -174,6 +174,7 @@ router.post('/', auth, async (req, res) => {
 
     const { title, description, scheduledAt, duration, participants, type, formattedScheduledAt } = req.body;
     const hostId = req.user.userId;
+    const meetingDuration = Number(duration) || 60;
 
     // traceId helps correlate logs for this scheduling request
     const traceId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
@@ -203,7 +204,7 @@ router.post('/', auth, async (req, res) => {
     if (description) meetingData.description = description;
     if (scheduledAt) meetingData.scheduledAt = new Date(scheduledAt);
     if (formattedScheduledAt) meetingData.formattedScheduledAt = formattedScheduledAt;
-    if (duration) meetingData.duration = duration;
+    meetingData.duration = meetingDuration;
     
     // Debug log for participants processing
     console.log('[Debug] Incoming participants:', {
@@ -222,14 +223,14 @@ router.post('/', auth, async (req, res) => {
     }
 
     // Set expiration time based on scheduled time + duration
-    if (scheduledAt && duration) {
+    if (scheduledAt) {
       const scheduledDateTime = new Date(scheduledAt);
       const expirationTime = new Date(scheduledDateTime);
-      expirationTime.setMinutes(expirationTime.getMinutes() + duration);
+      expirationTime.setMinutes(expirationTime.getMinutes() + meetingDuration);
       meetingData.expiresAt = expirationTime;
 
       // Calculate grace period expiration (duration + 30%)
-      const gracePeriodMinutes = duration * 1.3;
+      const gracePeriodMinutes = meetingDuration * 1.3;
       const gracePeriodExpirationTime = new Date(scheduledDateTime);
       gracePeriodExpirationTime.setMinutes(gracePeriodExpirationTime.getMinutes() + gracePeriodMinutes);
       meetingData.gracePeriodExpiresAt = gracePeriodExpirationTime;
@@ -239,16 +240,14 @@ router.post('/', auth, async (req, res) => {
     if (type === 'instant') {
       meetingData.status = 'active';
       meetingData.startedAt = new Date();
-      if (duration) {
-        const now = new Date();
-        const expirationTime = new Date(now);
-        expirationTime.setMinutes(expirationTime.getMinutes() + duration);
-        meetingData.expiresAt = expirationTime;
-        const gracePeriodMinutes = duration * 1.3;
-        const gracePeriodExpirationTime = new Date(now);
-        gracePeriodExpirationTime.setMinutes(gracePeriodExpirationTime.getMinutes() + gracePeriodMinutes);
-        meetingData.gracePeriodExpiresAt = gracePeriodExpirationTime;
-      }
+      const now = new Date();
+      const expirationTime = new Date(now);
+      expirationTime.setMinutes(expirationTime.getMinutes() + meetingDuration);
+      meetingData.expiresAt = expirationTime;
+      const gracePeriodMinutes = meetingDuration * 1.3;
+      const gracePeriodExpirationTime = new Date(now);
+      gracePeriodExpirationTime.setMinutes(gracePeriodExpirationTime.getMinutes() + gracePeriodMinutes);
+      meetingData.gracePeriodExpiresAt = gracePeriodExpirationTime;
     }
 
     const meeting = new Meeting(meetingData);
@@ -495,7 +494,8 @@ router.get('/:meetingId', auth, async (req, res) => {
     const hasAccess = 
       meeting.host._id.toString() === userId ||
       meeting.participants.some(p => p.user._id.toString() === userId) ||
-      meeting.invitedEmails.includes(req.user.email);
+      meeting.invitedEmails.includes(req.user.email) ||
+      meeting.type === 'instant';
 
     if (!hasAccess) {
       return res.status(403).json({
@@ -551,11 +551,30 @@ router.post('/:meetingId/join', auth, async (req, res) => {
       });
     }
 
+    if (['ended', 'cancelled'].includes(meeting.status)) {
+      return res.status(410).json({
+        success: false,
+        message: 'This meeting has ended'
+      });
+    }
+
+    if (meeting.expiresAt && new Date() > meeting.expiresAt) {
+      meeting.status = 'ended';
+      meeting.isExpired = true;
+      meeting.endedAt = meeting.endedAt || new Date();
+      await meeting.save();
+      return res.status(410).json({
+        success: false,
+        message: 'This meeting has expired'
+      });
+    }
+
     // Check if meeting is accessible
     const hasAccess = 
       meeting.host.toString() === userId ||
       meeting.participants.some(p => p.user.toString() === userId) ||
-      meeting.invitedEmails.includes(user.email);
+      meeting.invitedEmails.includes(user.email) ||
+      meeting.type === 'instant';
 
     if (!hasAccess) {
       return res.status(403).json({
@@ -636,6 +655,45 @@ router.post('/:meetingId/leave', auth, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error while leaving meeting'
+    });
+  }
+});
+
+// End a meeting for all participants
+router.post('/:meetingId/end', auth, async (req, res) => {
+  try {
+    const { meetingId } = req.params;
+    const userId = req.user.userId;
+
+    const meeting = await Meeting.findOne({ meetingId });
+
+    if (!meeting) {
+      return res.status(404).json({
+        success: false,
+        message: 'Meeting not found'
+      });
+    }
+
+    if (meeting.host.toString() !== userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only the meeting host can end this meeting'
+      });
+    }
+
+    if (meeting.status !== 'ended') {
+      await meeting.endMeeting();
+    }
+
+    res.json({
+      success: true,
+      message: 'Meeting ended successfully'
+    });
+  } catch (error) {
+    console.error('End meeting error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while ending meeting'
     });
   }
 });
@@ -721,18 +779,13 @@ router.delete('/:meetingId', auth, async (req, res) => {
       });
     }
 
-    if (meeting.status === 'active') {
-      // End the meeting first
-      await meeting.endMeeting();
-    } else if (meeting.status === 'scheduled') {
-      // Cancel the meeting
-      meeting.status = 'cancelled';
-      await meeting.save();
-    }
+    // Remove the meeting immediately so it disappears from history right away.
+    // If you want to preserve an audit trail later, move this to a soft-delete flag.
+    await Meeting.deleteOne({ _id: meeting._id });
 
     res.json({
       success: true,
-      message: 'Meeting cancelled successfully'
+      message: 'Meeting deleted successfully'
     });
   } catch (error) {
     console.error('Delete meeting error:', error);
