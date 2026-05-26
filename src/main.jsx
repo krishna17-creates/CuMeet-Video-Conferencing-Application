@@ -8,6 +8,7 @@ import './api/axios.js';
 import App from './App.jsx';
 import './index.css';
 import './styles/scheduleMeeting.css';
+import '@livekit/components-styles';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

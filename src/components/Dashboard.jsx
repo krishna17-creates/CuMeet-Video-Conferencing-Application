@@ -26,20 +26,32 @@ import {
   endOfMonth,
   eachDayOfInterval,
   getDay,
-  parseISO
+  parseISO,
+  addMonths,
+  subMonths
 } from 'date-fns';
 import '../styles/dashboard.css'; // Import the new CSS file (lowercase filename)
 
 // --- New Mini-Calendar Component ---
 const CalendarWidget = ({ meetings }) => {
-  const [currentDate] = useState(new Date()); // Simplified to only show current month
+  const [currentDate, setCurrentDate] = useState(new Date());
 
   // Get a list of "yyyy-MM-dd" strings for scheduled meetings
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const meetingDays = useMemo(() => {
-    return meetings
-      .filter(m => m.status === 'scheduled' && m.scheduledAt)
-      .map(m => format(parseISO(m.scheduledAt), 'yyyy-MM-dd'));
+    return meetings.reduce((acc, meeting) => {
+      const dateSource = meeting.scheduledAt || meeting.startedAt || meeting.createdAt;
+      if (!dateSource) return acc;
+
+      const key = format(parseISO(dateSource), 'yyyy-MM-dd');
+      const isPast =
+        ['ended', 'cancelled'].includes(meeting.status) ||
+        (meeting.gracePeriodExpiresAt && new Date() > parseISO(meeting.gracePeriodExpiresAt));
+
+      acc[key] = acc[key] || { upcoming: 0, past: 0 };
+      acc[key][isPast ? 'past' : 'upcoming'] += 1;
+      return acc;
+    }, {});
   }, [meetings]);
 
   const daysInMonth = eachDayOfInterval({
@@ -54,7 +66,21 @@ const CalendarWidget = ({ meetings }) => {
 
     <div className="calendar-widget card">
       <div className="calendar-widget-header">
+        <button
+          className="calendar-nav-btn"
+          onClick={() => setCurrentDate((date) => subMonths(date, 1))}
+          title="Previous month"
+        >
+          ‹
+        </button>
         <h3>{user?.name}'s {format(currentDate, 'MMMM yyyy')}</h3>
+        <button
+          className="calendar-nav-btn"
+          onClick={() => setCurrentDate((date) => addMonths(date, 1))}
+          title="Next month"
+        >
+          ›
+        </button>
       </div>
       <div className="calendar-widget-grid">
         {/* Day names: S, M, T, W, T, F, S */}
@@ -80,7 +106,8 @@ const CalendarWidget = ({ meetings }) => {
         {/* Render actual days */}
         {daysInMonth.map(day => {
           const dayString = format(day, 'yyyy-MM-dd');
-          const hasMeeting = meetingDays.includes(dayString);
+          const dayMeetings = meetingDays[dayString];
+          const hasMeeting = Boolean(dayMeetings);
           const isToday = isSameDay(day, new Date());
 
           let dayClass = 'calendar-day';
@@ -88,11 +115,29 @@ const CalendarWidget = ({ meetings }) => {
           if (isToday) dayClass += ' today';
 
           return (
-            <div key={dayString} className={dayClass}>
+            <div
+              key={dayString}
+              className={dayClass}
+              title={
+                dayMeetings
+                  ? `${dayMeetings.upcoming} upcoming, ${dayMeetings.past} past`
+                  : undefined
+              }
+            >
               {format(day, 'd')}
+              {dayMeetings && (
+                <span className="calendar-dots">
+                  {dayMeetings.upcoming > 0 && <span className="dot-upcoming" />}
+                  {dayMeetings.past > 0 && <span className="dot-past" />}
+                </span>
+              )}
             </div>
           );
         })}
+      </div>
+      <div className="calendar-legend">
+        <span><i className="dot-upcoming" /> Upcoming</span>
+        <span><i className="dot-past" /> Past</span>
       </div>
     </div>
   );

@@ -3,8 +3,53 @@ const Meeting = require('../models/Meeting');
 const User = require('../models/User');
 const auth = require('../middleware/auth');
 const sgMail = require('@sendgrid/mail');
+const { AccessToken, RoomServiceClient } = require('livekit-server-sdk');
 
 const router = express.Router();
+const LIVEKIT_EMPTY_TIMEOUT_SECONDS = Number(process.env.LIVEKIT_EMPTY_TIMEOUT_SECONDS) || 20 * 60;
+const LIVEKIT_MAX_PARTICIPANTS = Number(process.env.LIVEKIT_MAX_PARTICIPANTS) || 10;
+
+const getLiveKitService = () => {
+  if (!process.env.LIVEKIT_URL || !process.env.LIVEKIT_API_KEY || !process.env.LIVEKIT_API_SECRET) {
+    return null;
+  }
+
+  const serviceUrl = process.env.LIVEKIT_URL.replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://');
+  return new RoomServiceClient(
+    serviceUrl,
+    process.env.LIVEKIT_API_KEY,
+    process.env.LIVEKIT_API_SECRET
+  );
+};
+
+const createLiveKitRoomIfNeeded = async (roomName) => {
+  const livekit = getLiveKitService();
+  if (!livekit) return;
+
+  try {
+    await livekit.createRoom({
+      name: roomName,
+      emptyTimeout: LIVEKIT_EMPTY_TIMEOUT_SECONDS,
+      maxParticipants: LIVEKIT_MAX_PARTICIPANTS,
+    });
+  } catch (error) {
+    const message = error?.message || '';
+    if (!message.toLowerCase().includes('already')) {
+      console.warn('[LiveKit] createRoom warning:', message);
+    }
+  }
+};
+
+const deleteLiveKitRoom = async (roomName) => {
+  const livekit = getLiveKitService();
+  if (!livekit) return;
+
+  try {
+    await livekit.deleteRoom(roomName);
+  } catch (error) {
+    console.warn('[LiveKit] deleteRoom warning:', error?.message || error);
+  }
+};
 
 // Simple request logger for this router to help trace scheduling flow
 router.use((req, res, next) => {
@@ -421,7 +466,8 @@ router.get('/', auth, async (req, res) => {
     const query = {
       $or: [
         { host: userId },
-        { 'participants.user': userId }
+        { 'participants.user': userId },
+        { invitedEmails: req.user.email }
       ]
     };
 
@@ -621,6 +667,99 @@ router.post('/:meetingId/join', auth, async (req, res) => {
   }
 });
 
+// Create a LiveKit token for an authenticated, authorized participant.
+router.post('/:meetingId/livekit-token', auth, async (req, res) => {
+  try {
+    const { meetingId } = req.params;
+    const userId = req.user.userId;
+    const { displayName } = req.body;
+
+    if (!process.env.LIVEKIT_URL || !process.env.LIVEKIT_API_KEY || !process.env.LIVEKIT_API_SECRET) {
+      return res.status(500).json({
+        success: false,
+        message: 'LiveKit is not configured on the server'
+      });
+    }
+
+    const user = await User.findById(userId);
+    const meeting = await Meeting.findOne({ meetingId });
+
+    if (!user || !meeting) {
+      return res.status(404).json({
+        success: false,
+        message: 'Meeting not found'
+      });
+    }
+
+    if (['ended', 'cancelled'].includes(meeting.status)) {
+      return res.status(410).json({
+        success: false,
+        message: 'This meeting has ended'
+      });
+    }
+
+    if (meeting.expiresAt && new Date() > meeting.expiresAt) {
+      meeting.status = 'ended';
+      meeting.isExpired = true;
+      meeting.endedAt = meeting.endedAt || new Date();
+      await meeting.save();
+      await deleteLiveKitRoom(meeting.meetingId);
+      return res.status(410).json({
+        success: false,
+        message: 'This meeting has expired'
+      });
+    }
+
+    const hasAccess =
+      meeting.host.toString() === userId ||
+      meeting.participants.some(p => p.user.toString() === userId) ||
+      meeting.invitedEmails.includes(user.email) ||
+      meeting.type === 'instant';
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: 'You are not invited to this meeting'
+      });
+    }
+
+    const identity = `${user._id.toString()}-${user.email.toLowerCase()}`;
+    const name = displayName || user.name || user.email;
+    const roomName = meeting.meetingId;
+
+    await createLiveKitRoomIfNeeded(roomName);
+
+    const token = new AccessToken(process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET, {
+      identity,
+      name,
+      ttl: Math.max(Number(meeting.duration || 60) * 60, 3600),
+    });
+
+    token.addGrant({
+      roomJoin: true,
+      room: roomName,
+      canPublish: true,
+      canSubscribe: true,
+      canPublishData: true,
+    });
+
+    res.json({
+      success: true,
+      token: await token.toJwt(),
+      serverUrl: process.env.LIVEKIT_URL,
+      roomName,
+      maxParticipants: LIVEKIT_MAX_PARTICIPANTS,
+      emptyTimeoutSeconds: LIVEKIT_EMPTY_TIMEOUT_SECONDS,
+    });
+  } catch (error) {
+    console.error('LiveKit token error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while preparing video room'
+    });
+  }
+});
+
 // Leave a meeting
 router.post('/:meetingId/leave', auth, async (req, res) => {
   try {
@@ -684,6 +823,7 @@ router.post('/:meetingId/end', auth, async (req, res) => {
     if (meeting.status !== 'ended') {
       await meeting.endMeeting();
     }
+    await deleteLiveKitRoom(meeting.meetingId);
 
     res.json({
       success: true,
@@ -694,6 +834,60 @@ router.post('/:meetingId/end', auth, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error while ending meeting'
+    });
+  }
+});
+
+// Add invited emails after meeting creation. Host only.
+router.post('/:meetingId/invite', auth, async (req, res) => {
+  try {
+    const { meetingId } = req.params;
+    const userId = req.user.userId;
+    const { emails } = req.body;
+
+    const meeting = await Meeting.findOne({ meetingId });
+    const host = await User.findById(userId);
+
+    if (!meeting || !host) {
+      return res.status(404).json({
+        success: false,
+        message: 'Meeting not found'
+      });
+    }
+
+    if (meeting.host.toString() !== userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only the host can invite participants'
+      });
+    }
+
+    const nextEmails = (Array.isArray(emails) ? emails : String(emails || '').split(','))
+      .map(email => email.trim().toLowerCase())
+      .filter(email => email && email.includes('@'));
+
+    const current = new Set(meeting.invitedEmails || []);
+    nextEmails.forEach(email => current.add(email));
+    meeting.invitedEmails = [...current];
+    await meeting.save();
+
+    if (nextEmails.length > 0) {
+      setImmediate(() => {
+        sendMeetingInvitation(meeting, nextEmails, host.name, `invite-${Date.now()}`).catch(err => {
+          console.error('[Meetings] invite email error:', err);
+        });
+      });
+    }
+
+    res.json({
+      success: true,
+      invitedEmails: meeting.invitedEmails
+    });
+  } catch (error) {
+    console.error('Invite participants error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while inviting participants'
     });
   }
 });

@@ -551,3 +551,166 @@ RESPONSIVE STYLES
     height: 40px;
   }
 }
+
+/* LiveKit production room */
+.livekit-meeting {
+  background: #101114;
+}
+
+.livekit-header {
+  background: rgba(16, 17, 20, 0.94);
+  min-height: 64px;
+}
+
+.meeting-id {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.meeting-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.meeting-icon-btn,
+.meeting-end-btn {
+  height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.meeting-icon-btn {
+  width: 40px;
+}
+
+.meeting-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.meeting-end-btn {
+  padding: 0 14px;
+  background: #dc2626;
+  color: white;
+  border-color: rgba(255, 255, 255, 0.12);
+  font-weight: 700;
+}
+
+.livekit-stage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.livekit-stage .lk-video-conference {
+  height: calc(100vh - 64px);
+  background: #101114;
+}
+
+.livekit-stage .lk-grid-layout {
+  padding: 16px 16px 104px;
+  gap: 10px;
+}
+
+.livekit-stage .lk-participant-tile {
+  border-radius: 8px;
+  overflow: hidden;
+  background: #181a1f;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.livekit-stage .lk-control-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  width: auto;
+  max-width: calc(100vw - 24px);
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(27, 29, 34, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.35);
+  z-index: 80;
+}
+
+.livekit-stage .lk-button {
+  border-radius: 8px;
+}
+
+.livekit-stage .lk-button[aria-pressed="true"],
+.livekit-stage .lk-button.lk-button-menu {
+  background: rgba(20, 184, 166, 0.18);
+  color: white;
+}
+
+.livekit-stage .lk-disconnect-button {
+  background: #dc2626;
+  color: white;
+}
+
+.livekit-stage .lk-chat {
+  width: min(380px, 92vw);
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  background: #17191e;
+}
+
+.invite-panel {
+  position: fixed;
+  top: 78px;
+  right: 16px;
+  width: min(380px, calc(100vw - 32px));
+  background: #1b1d22;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.35);
+  z-index: 120;
+}
+
+.invite-panel strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.invite-textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+@media (max-width: 768px) {
+  .livekit-header {
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .meeting-header-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .meeting-end-btn {
+    padding: 0 10px;
+  }
+
+  .livekit-stage .lk-video-conference {
+    height: calc(100vh - 104px);
+  }
+
+  .livekit-stage .lk-grid-layout {
+    padding: 10px 10px 110px;
+  }
+
+  .livekit-stage .lk-control-bar {
+    bottom: 8px;
+    overflow-x: auto;
+  }
+}
