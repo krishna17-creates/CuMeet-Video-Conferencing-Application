@@ -12,11 +12,13 @@ import {
   FiXCircle,
   FiInfo,
   FiRadio,
-  FiBarChart2,
-  FiCheckCircle,
-  FiArchive
+  FiArchive,
+  FiZap,
+  FiLogIn
 } from 'react-icons/fi';
+import { RiFileList3Line, RiCalendarEventLine, RiCheckboxCircleLine } from 'react-icons/ri';
 import { useNotifications } from '../context/NotificationContext';
+import { readProfileSettings } from '../utils/profileSettings';
 // Import new functions from date-fns for the calendar
 import {
   format,
@@ -32,9 +34,29 @@ import {
 } from 'date-fns';
 import '../styles/dashboard.css'; // Import the new CSS file (lowercase filename)
 
+const getMeetingDeadline = (meeting) => {
+  if (meeting?.endedAt) return parseISO(meeting.endedAt);
+  if (meeting?.expiresAt) return parseISO(meeting.expiresAt);
+
+  const source = meeting?.startedAt || meeting?.scheduledAt || meeting?.createdAt;
+  if (!source || !meeting?.duration) return null;
+
+  const baseTime = parseISO(source);
+  return new Date(baseTime.getTime() + meeting.duration * 60 * 1000);
+};
+
+const isMeetingEnded = (meeting, now = new Date()) => {
+  if (!meeting) return false;
+  if (['ended', 'cancelled'].includes(meeting.status)) return true;
+
+  const deadline = getMeetingDeadline(meeting);
+  return Boolean(deadline && now >= deadline);
+};
+
 // --- New Mini-Calendar Component ---
 const CalendarWidget = ({ meetings }) => {
   const [currentDate, setCurrentDate] = useState(new Date());
+  const [selectedDate, setSelectedDate] = useState(new Date());
 
   // Get a list of "yyyy-MM-dd" strings for scheduled meetings
   const { user } = useAuth();
@@ -44,15 +66,23 @@ const CalendarWidget = ({ meetings }) => {
       if (!dateSource) return acc;
 
       const key = format(parseISO(dateSource), 'yyyy-MM-dd');
-      const isPast =
-        ['ended', 'cancelled'].includes(meeting.status) ||
-        (meeting.gracePeriodExpiresAt && new Date() > parseISO(meeting.gracePeriodExpiresAt));
+      const isPast = isMeetingEnded(meeting);
 
-      acc[key] = acc[key] || { upcoming: 0, past: 0 };
-      acc[key][isPast ? 'past' : 'upcoming'] += 1;
+      acc[key] = acc[key] || { upcoming: [], past: [] };
+      acc[key][isPast ? 'past' : 'upcoming'].push({
+        id: meeting.id,
+        title: meeting.title,
+        meetingId: meeting.meetingId,
+        status: meeting.status,
+        time: dateSource,
+      });
       return acc;
     }, {});
   }, [meetings]);
+
+  const selectedDateKey = format(selectedDate, 'yyyy-MM-dd');
+  const selectedDayMeetings = meetingDays[selectedDateKey] || { upcoming: [], past: [] };
+  const selectedMeetingList = [...selectedDayMeetings.upcoming, ...selectedDayMeetings.past];
 
   const daysInMonth = eachDayOfInterval({
     start: startOfMonth(currentDate),
@@ -109,26 +139,28 @@ const CalendarWidget = ({ meetings }) => {
           const dayMeetings = meetingDays[dayString];
           const hasMeeting = Boolean(dayMeetings);
           const isToday = isSameDay(day, new Date());
+          const meetingCount = dayMeetings ? dayMeetings.upcoming.length + dayMeetings.past.length : 0;
+          const dayMeetingTitles = dayMeetings
+            ? [...dayMeetings.upcoming, ...dayMeetings.past].map((meeting) => meeting.title).join(', ')
+            : '';
 
           let dayClass = 'calendar-day';
           if (hasMeeting) dayClass += ' event';
           if (isToday) dayClass += ' today';
+          if (selectedDateKey === dayString) dayClass += ' selected';
 
           return (
             <div
               key={dayString}
               className={dayClass}
-              title={
-                dayMeetings
-                  ? `${dayMeetings.upcoming} upcoming, ${dayMeetings.past} past`
-                  : undefined
-              }
+              title={dayMeetings ? `${meetingCount} meeting${meetingCount > 1 ? 's' : ''}: ${dayMeetingTitles}` : undefined}
+              onClick={() => setSelectedDate(day)}
             >
               {format(day, 'd')}
               {dayMeetings && (
                 <span className="calendar-dots">
-                  {dayMeetings.upcoming > 0 && <span className="dot-upcoming" />}
-                  {dayMeetings.past > 0 && <span className="dot-past" />}
+                  {dayMeetings.upcoming.length > 0 && <span className="dot-upcoming" />}
+                  {dayMeetings.past.length > 0 && <span className="dot-past" />}
                 </span>
               )}
             </div>
@@ -139,11 +171,30 @@ const CalendarWidget = ({ meetings }) => {
         <span><i className="dot-upcoming" /> Upcoming</span>
         <span><i className="dot-past" /> Past</span>
       </div>
+      <div className="calendar-day-details">
+        <div className="calendar-day-details-header">
+          <h4>{format(selectedDate, 'EEE, MMM d')}</h4>
+          <span>{selectedMeetingList.length} meeting{selectedMeetingList.length === 1 ? '' : 's'}</span>
+        </div>
+        {selectedMeetingList.length > 0 ? (
+          <div className="calendar-day-meeting-list">
+            {selectedMeetingList.map((meeting) => (
+              <div key={`${meeting.meetingId}-${meeting.id}`} className="calendar-day-meeting-item">
+                <strong>{meeting.title}</strong>
+                <span>{meeting.status}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="calendar-day-empty">No meetings on this date.</p>
+        )}
+      </div>
     </div>
   );
 };
 
 const Dashboard = () => {
+  const profileSettings = useMemo(() => readProfileSettings(), []);
   const [meetings, setMeetings] = useState([]);
   const [joinMeetingId, setJoinMeetingId] = useState('');
   const [loading, setLoading] = useState(true);
@@ -244,13 +295,7 @@ const Dashboard = () => {
     let completedCount = 0;
 
     meetings.forEach(meeting => {
-      // Ensure gracePeriodExpiresAt exists before parsing
-      const gracePeriodExpirationTime = meeting.gracePeriodExpiresAt
-        ? parseISO(meeting.gracePeriodExpiresAt)
-        : null;
-      const isPast =
-        ['ended', 'cancelled'].includes(meeting.status) ||
-        (gracePeriodExpirationTime && now > gracePeriodExpirationTime);
+      const isPast = isMeetingEnded(meeting, now);
 
       if (isPast) {
         past.push(meeting);
@@ -310,28 +355,28 @@ const Dashboard = () => {
     <div className="dashboard">
       <div className="container">
         <div className="dashboard-header">
-          <h1>Welcome back, {user?.name}!</h1>
+          <h1 className="dashboard-welcome">Welcome back, {user?.name}!</h1>
           <p>Manage your meetings and connect with your team</p>
         </div>
 
         {/* --- New Stats Section --- */}
         <div className="dashboard-stats">
           <div className="stat-card card">
-            <FiBarChart2 className="stat-icon" />
+            <RiFileList3Line className="stat-icon" />
             <div className="stat-info">
               <h3>{stats.total}</h3>
               <p>Total Meetings</p>
             </div>
           </div>
           <div className="stat-card card">
-            <FiCalendar className="stat-icon upcoming" />
+            <RiCalendarEventLine className="stat-icon upcoming" />
             <div className="stat-info">
               <h3>{stats.upcoming}</h3>
               <p>Upcoming Meetings</p>
             </div>
           </div>
           <div className="stat-card card">
-            <FiCheckCircle className="stat-icon completed" />
+            <RiCheckboxCircleLine className="stat-icon completed" />
             <div className="stat-info">
               <h3>{stats.completed}</h3>
               <p>Completed Meetings</p>
@@ -343,20 +388,20 @@ const Dashboard = () => {
         <div className="quick-actions">
           <div className="action-card card">
             <div className="action-content">
-              <FiVideo className="action-icon" />
+              <FiZap className="action-icon" />
               <div>
                 <h3>Start Instant Meeting</h3>
                 <p>Begin a meeting right now</p>
               </div>
             </div>
             <button onClick={handleStartMeeting} className="btn btn-primary">
-              <FiVideo />
+              <FiZap />
               Start Meeting
             </button>
           </div>
           <div className="action-card card">
             <div className="action-content">
-              <FiUsers className="action-icon" />
+              <FiLogIn className="action-icon" />
               <div>
                 <h3>Join Meeting</h3>
                 <p>Enter meeting ID to join</p>
@@ -391,7 +436,7 @@ const Dashboard = () => {
         </div>
 
         {/* --- New Main Layout: Meetings List + Calendar Widget --- */}
-        <div className="dashboard-main-layout">
+        <div className={`dashboard-main-layout ${profileSettings.compactMeetingCards ? 'compact-meeting-cards' : ''}`}>
           <div className="meetings-section">
             <div className="section-header">
               <h2>Your Meetings</h2>
@@ -432,23 +477,18 @@ const Dashboard = () => {
               ) : (
                 filteredMeetings.map((meeting, index) => {
                   const scheduledTime = meeting.scheduledAt ? parseISO(meeting.scheduledAt) : null;
-                  const gracePeriodExpirationTime = meeting.gracePeriodExpiresAt
-                    ? parseISO(meeting.gracePeriodExpiresAt)
-                    : null;
-
-                  const isPast =
-                    ['ended', 'cancelled'].includes(meeting.status) ||
-                    (gracePeriodExpirationTime && now > gracePeriodExpirationTime);
-                  const isEffectivelyLive =
-                    meeting.status === 'active' ||
-                    (meeting.status === 'scheduled' && scheduledTime && now >= scheduledTime && !isPast);
+                  const startedTime = meeting.startedAt ? parseISO(meeting.startedAt) : null;
+                  const createdTime = meeting.createdAt ? parseISO(meeting.createdAt) : null;
+                  const displayTimeSource = scheduledTime || startedTime || createdTime;
+                  const isPast = isMeetingEnded(meeting, now);
+                  const isEffectivelyLive = meeting.status === 'active' && !isPast;
 
                   const isHost = user && user.id === meeting.host?._id;
                   const canCancel = isHost && !isPast && (meeting.status === 'scheduled' || meeting.status === 'active');
 
                   let buttonText = 'Unavailable';
                   let cardHighlightClass = 'highlight-inactive';
-                  let timeDisplay = scheduledTime ? format(scheduledTime, 'p') : 'Just now';
+                  let timeDisplay = displayTimeSource ? format(displayTimeSource, 'p') : 'Just now';
                   let isJoinable = false;
 
                   if (isPast) {
@@ -458,7 +498,9 @@ const Dashboard = () => {
                     timeDisplay =
                       scheduledTime && now > scheduledTime
                         ? `Started ${formatDistanceToNow(scheduledTime, { addSuffix: true })}`
-                        : 'Now';
+                        : displayTimeSource
+                          ? `Started ${formatDistanceToNow(displayTimeSource, { addSuffix: true })}`
+                          : 'Now';
                     cardHighlightClass = 'highlight-active';
                     isJoinable = true;
                   } else if (scheduledTime && now < scheduledTime) {
@@ -476,12 +518,15 @@ const Dashboard = () => {
                     buttonText = 'Join';
                     isJoinable = true;
                     cardHighlightClass = 'highlight-scheduled';
+                    if (meeting.type === 'instant' && displayTimeSource) {
+                      timeDisplay = `Started ${formatDistanceToNow(displayTimeSource, { addSuffix: true })}`;
+                    }
                   }
 
                   return (
                     <div
                       key={meeting.id || meeting._id || index}
-                      className={`meeting-card card status-${meeting.status} ${cardHighlightClass}`}
+                      className={`meeting-card card status-${meeting.status} ${cardHighlightClass} ${profileSettings.compactMeetingCards ? 'meeting-card-compact' : ''}`}
                       style={{ animationDelay: `${index * 0.05}s` }} // Staggered animation for list
                     >
                       {isEffectivelyLive ? (
@@ -504,7 +549,13 @@ const Dashboard = () => {
                         <div className="meeting-details">
                           <div className="meeting-detail-item">
                             <FiCalendar />
-                            <span>{scheduledTime ? format(scheduledTime, 'PP') : 'Instant'}</span>
+                            <span>
+                              {scheduledTime
+                                ? format(scheduledTime, 'PP')
+                                : displayTimeSource
+                                  ? format(displayTimeSource, 'PPp')
+                                  : 'Instant'}
+                            </span>
                           </div>
                           <div className="meeting-detail-item">
                             <FiClock />

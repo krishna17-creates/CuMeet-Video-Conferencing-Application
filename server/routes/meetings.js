@@ -8,6 +8,8 @@ const { AccessToken, RoomServiceClient } = require('livekit-server-sdk');
 const router = express.Router();
 const LIVEKIT_EMPTY_TIMEOUT_SECONDS = Number(process.env.LIVEKIT_EMPTY_TIMEOUT_SECONDS) || 20 * 60;
 const LIVEKIT_MAX_PARTICIPANTS = Number(process.env.LIVEKIT_MAX_PARTICIPANTS) || 10;
+const EMPTY_ROOM_END_DELAY_MS = LIVEKIT_EMPTY_TIMEOUT_SECONDS * 1000;
+const emptyRoomTimers = new Map();
 
 const getLiveKitService = () => {
   if (!process.env.LIVEKIT_URL || !process.env.LIVEKIT_API_KEY || !process.env.LIVEKIT_API_SECRET) {
@@ -49,6 +51,44 @@ const deleteLiveKitRoom = async (roomName) => {
   } catch (error) {
     console.warn('[LiveKit] deleteRoom warning:', error?.message || error);
   }
+};
+
+const clearEmptyRoomTimer = (meetingId) => {
+  const existingTimer = emptyRoomTimers.get(meetingId);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+    emptyRoomTimers.delete(meetingId);
+  }
+};
+
+const scheduleEmptyRoomEnd = async (meetingId) => {
+  clearEmptyRoomTimer(meetingId);
+
+  const timer = setTimeout(async () => {
+    try {
+      const meeting = await Meeting.findOne({ meetingId });
+      if (!meeting || meeting.status === 'ended' || meeting.status === 'cancelled') {
+        clearEmptyRoomTimer(meetingId);
+        return;
+      }
+
+      const activeParticipants = meeting.participants.filter((participant) => !participant.leftAt);
+      if (activeParticipants.length > 0) {
+        clearEmptyRoomTimer(meetingId);
+        return;
+      }
+
+      await meeting.endMeeting();
+      await deleteLiveKitRoom(meeting.meetingId);
+      console.log(`[Meetings] Auto-ended empty meeting ${meetingId} after ${LIVEKIT_EMPTY_TIMEOUT_SECONDS} seconds.`);
+    } catch (error) {
+      console.error(`[Meetings] Failed to auto-end empty meeting ${meetingId}:`, error);
+    } finally {
+      clearEmptyRoomTimer(meetingId);
+    }
+  }, EMPTY_ROOM_END_DELAY_MS);
+
+  emptyRoomTimers.set(meetingId, timer);
 };
 
 // Simple request logger for this router to help trace scheduling flow
@@ -634,6 +674,8 @@ router.post('/:meetingId/join', auth, async (req, res) => {
       await meeting.startMeeting();
     }
 
+    clearEmptyRoomTimer(meetingId);
+
     // Add participant if not already added
     await meeting.addParticipant({
       userId,
@@ -777,12 +819,10 @@ router.post('/:meetingId/leave', auth, async (req, res) => {
 
     await meeting.removeParticipant(userId);
 
-    // If host leaves and there are no other participants, end the meeting
-    if (meeting.host.toString() === userId) {
-      const activeParticipants = meeting.participants.filter(p => !p.leftAt);
-      if (activeParticipants.length <= 1) {
-        await meeting.endMeeting();
-      }
+    const activeParticipants = meeting.participants.filter((participant) => !participant.leftAt);
+
+    if (activeParticipants.length === 0) {
+      await scheduleEmptyRoomEnd(meetingId);
     }
 
     res.json({
@@ -823,6 +863,7 @@ router.post('/:meetingId/end', auth, async (req, res) => {
     if (meeting.status !== 'ended') {
       await meeting.endMeeting();
     }
+    clearEmptyRoomTimer(meeting.meetingId);
     await deleteLiveKitRoom(meeting.meetingId);
 
     res.json({

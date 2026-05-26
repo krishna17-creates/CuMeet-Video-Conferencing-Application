@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext'; // Import useNotifications
-import { FiHome, FiCalendar, FiUser, FiLogOut, FiVideo, FiBell } from 'react-icons/fi'; // Import FiBell
+import { FiHome, FiCalendar, FiUser, FiLogOut, FiBell } from 'react-icons/fi'; // Import FiBell
 import NotificationDropdown from './NotificationDropdown'; // Import NotificationDropdown
 
 const Navbar = () => {
@@ -26,14 +26,22 @@ const Navbar = () => {
     <nav className="navbar">
       <div className="nav-container">
         <Link to="/dashboard" className="nav-brand">
-          <FiVideo className="brand-icon" />
-          Cumeet
+          <div className="cumeet-logo small-logo" aria-hidden>
+            <span className="logo-c">C</span>
+            <span className="logo-u">U</span>
+            <span className="logo-meet">MEET</span>
+          </div>
         </Link>
 
         <div className="nav-menu">
           <Link to="/dashboard" className={isActive('/dashboard')}>
             <FiHome />
             Dashboard
+          </Link>
+
+          <Link to="/calendar" className={isActive('/calendar')}>
+            <FiCalendar />
+            Calendar
           </Link>
           
           <Link to="/schedule" className={isActive('/schedule')}>
@@ -57,8 +65,8 @@ const Navbar = () => {
               <NotificationDropdown onClose={() => setShowNotifications(false)} />
             )}
           </div>
-          <span className="user-name">Hello, {user?.name}</span>
-          <button onClick={handleLogout} className="btn btn-secondary">
+          <span className="user-name">Hello, <span className="user-name-strong">{user?.name}</span></span>
+          <button onClick={handleLogout} className="btn btn-secondary btn-logout">
             <FiLogOut />
             Logout
           </button>

@@ -4,6 +4,7 @@ import HomePage from './components/HomePage';
 import LoginPage from './components/LoginPage';
 import SignUpPage from './components/SignUpPage';
 import Dashboard from './components/Dashboard';
+import CalendarPage from './components/CalendarPage';
 import MeetingRoom from './components/MeetingRoom';
 import ScheduleMeeting from './components/ScheduleMeeting';
 import Profile from './components/Profile';
@@ -55,6 +56,7 @@ function AppContent() {
         <Route path="/meeting/:meetingId" element={<ProtectedRoute><MeetingRoom /></ProtectedRoute>} />
         <Route path="/schedule" element={<ProtectedRoute><ScheduleMeeting /></ProtectedRoute>} />
         <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+        <Route path="/calendar" element={<ProtectedRoute><CalendarPage /></ProtectedRoute>} />
       </Routes>
       </div>
     </>

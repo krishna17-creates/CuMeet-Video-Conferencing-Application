@@ -108,15 +108,6 @@ export const setupInterceptors = (apiInstance, errorHandler) => {
         });
       }
 
-      if (import.meta.env.DEV) {
-        console.error('[API Error]', {
-          status: response?.status,
-          code: response?.data?.error?.code,
-          message: response?.data?.error?.message,
-          error: error.message,
-        });
-      }
-
       return Promise.reject(error);
     }
   );

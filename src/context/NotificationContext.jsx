@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState } from 'react';
+import { readProfileSettings } from '../utils/profileSettings';
 
 const NotificationContext = createContext();
 
@@ -13,10 +14,52 @@ export const useNotifications = () => {
 export const NotificationProvider = ({ children }) => {
   const [notifications, setNotifications] = useState([]);
 
+  const playNotificationTone = () => {
+    try {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) return;
+
+      const audioContext = new AudioContextClass();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+
+      oscillator.type = 'sine';
+      oscillator.frequency.value = 880;
+      gainNode.gain.value = 0.02;
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      oscillator.start();
+      setTimeout(() => {
+        oscillator.stop();
+        audioContext.close();
+      }, 120);
+    } catch (error) {
+      // Ignore browsers that block Web Audio or do not support it.
+    }
+  };
+
   const addNotification = (notification) => {
-    // Prevent duplicate notifications for the same meeting
-    if (!notifications.some(n => n.id === notification.id)) {
-      setNotifications((prev) => [...prev, { ...notification, read: false }]);
+    const profileSettings = readProfileSettings();
+
+    if (!profileSettings.notificationsEnabled) {
+      return;
+    }
+
+    let shouldPlayTone = false;
+
+    setNotifications((prev) => {
+      // Prevent duplicate notifications for the same meeting
+      if (prev.some(n => n.id === notification.id)) {
+        return prev;
+      }
+
+      shouldPlayTone = profileSettings.soundAlerts;
+      return [...prev, { ...notification, read: false }];
+    });
+
+    if (shouldPlayTone) {
+      playNotificationTone();
     }
   };
 

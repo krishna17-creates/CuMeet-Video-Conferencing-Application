@@ -81,15 +81,6 @@ const SignUpPage = () => {
         <div className="floating-shape shape-6"></div>
       </div>
 
-      {/* Logo/Brand */}
-      <Link to="/" className="auth-logo">
-        <div className="cumeet-logo">
-          <span className="logo-c">C</span>
-          <span className="logo-u">U</span>
-          <span className="logo-meet">MEET</span>
-        </div>
-      </Link>
-
       <div className="auth-container">
         <div className="auth-card">
           <div className="auth-header">

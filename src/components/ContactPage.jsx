@@ -1,9 +1,12 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import { FiMail, FiPhone, FiMapPin, FiSend, FiCheckCircle } from 'react-icons/fi';
 import '../styles/ContactPage.css';
 
 const ContactPage = () => {
+  const { user } = useAuth();
+  const navigate = useNavigate();
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -54,11 +57,19 @@ const ContactPage = () => {
               <span className="logo-meet">MEET</span>
             </div>
           </Link>
-          <nav className="main-nav">
-            <Link to="/">Home</Link>
-            <Link to="/login" className="btn btn-secondary btn-small">Sign In</Link>
-            <Link to="/signup" className="btn btn-primary btn-small">Get Started</Link>
-          </nav>
+          {user ? (
+            <div className="contact-header-actions">
+              <button type="button" className="btn btn-secondary btn-small" onClick={() => navigate('/profile')}>
+                Back to profile
+              </button>
+            </div>
+          ) : (
+            <nav className="main-nav">
+              <Link to="/">Home</Link>
+              <Link to="/login" className="btn btn-secondary btn-small">Sign In</Link>
+              <Link to="/signup" className="btn btn-primary btn-small">Get Started</Link>
+            </nav>
+          )}
         </div>
       </header>
 
