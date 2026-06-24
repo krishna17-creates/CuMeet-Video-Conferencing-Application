@@ -2,7 +2,7 @@ const express = require('express');
 const Meeting = require('../models/Meeting');
 const User = require('../models/User');
 const auth = require('../middleware/auth');
-const sgMail = require('@sendgrid/mail');
+const nodemailer = require('nodemailer');
 const { AccessToken, RoomServiceClient } = require('livekit-server-sdk');
 
 const router = express.Router();
@@ -127,17 +127,25 @@ router.get('/debug/trace', (req, res) => {
   res.json({ success: true, message: 'trace ok', time: new Date().toISOString() });
 });
 
-// Email setup using SendGrid
+// Email setup using Nodemailer
 // You can disable outgoing emails by setting DISABLE_EMAILS=true in environment variables.
 const EMAILS_DISABLED = process.env.DISABLE_EMAILS === 'true';
 
-// Configure SendGrid if API key is present
-if (process.env.SENDGRID_API_KEY) {
-  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+let transporter;
+if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+  transporter = nodemailer.createTransport({
+    host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+    port: process.env.EMAIL_PORT || 587,
+    secure: false, // true for 465, false for other ports
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS.replace(/\s+/g, ''),
+    },
+  });
 }
 
 // DEBUG: Print a concise summary of email configuration (do not print secrets)
-console.log('[Meetings][EmailConfig] SENDGRID_API_KEY present=', !!process.env.SENDGRID_API_KEY, 'SENDER_EMAIL present=', !!process.env.SENDER_EMAIL, 'DISABLE_EMAILS=', process.env.DISABLE_EMAILS);
+console.log('[Meetings][EmailConfig] EMAIL_USER present=', !!process.env.EMAIL_USER, 'EMAIL_PASS present=', !!process.env.EMAIL_PASS, 'DISABLE_EMAILS=', process.env.DISABLE_EMAILS);
 
 // Also print the computed boolean used by the code so there's no ambiguity
 console.log('[Meetings] EMAILS_DISABLED (computed boolean) =', EMAILS_DISABLED);
@@ -153,8 +161,8 @@ const sendMeetingInvitation = async (meeting, participantEmails, hostName, trace
     return;
   }
 
-  if (!process.env.SENDGRID_API_KEY || !process.env.SENDER_EMAIL) {
-    console.error(`${logPrefix} SKIPPING: SendGrid is not configured. Ensure SENDGRID_API_KEY and SENDER_EMAIL are set in the .env file.`);
+  if (!transporter) {
+    console.error(`${logPrefix} SKIPPING: Nodemailer is not configured. Ensure EMAIL_USER and EMAIL_PASS are set in the .env file.`);
     return;
   }
 
@@ -195,8 +203,8 @@ const sendMeetingInvitation = async (meeting, participantEmails, hostName, trace
       </div>
     `;
 
-    // Use SendGrid to send emails. Send individually to preserve personalization and avoid exposure of recipient list.
-    const fromEmail = process.env.SENDER_EMAIL;
+    // Use Nodemailer to send emails. Send individually to preserve personalization and avoid exposure of recipient list.
+    const fromEmail = process.env.EMAIL_USER;
 
     console.log(`${logPrefix} Preparing to send ${participantEmails.length} invitations from sender: ${fromEmail}.`);
 
@@ -216,14 +224,12 @@ const sendMeetingInvitation = async (meeting, participantEmails, hostName, trace
         };
 
         try {
-          const res = await sgMail.send(msg);
-          // sgMail.send can return an array with response(s)
-          console.log(`${logPrefix} Sent to ${email}; status: ${res?.[0]?.statusCode}`);
-          return { email, ok: true, status: res && res[0] && res[0].statusCode };
+          const res = await transporter.sendMail(msg);
+          console.log(`${logPrefix} Sent to ${email}; messageId: ${res.messageId}`);
+          return { email, ok: true, status: '200' };
         } catch (err) {
-          const body = err?.response?.body || err;
-          console.error(`${logPrefix} Error sending to ${email}:`, JSON.stringify(body));
-          return { email, ok: false, error: body };
+          console.error(`${logPrefix} Error sending to ${email}:`, err);
+          return { email, ok: false, error: err.message };
         }
       })
     );
@@ -445,36 +451,36 @@ router.post('/debug/send-test', auth, async (req, res) => {
       return res.json({ success: true, emailsQueued: false, message: 'Emails are disabled on the server' });
     }
 
-    if (!process.env.SENDGRID_API_KEY || !process.env.SENDER_EMAIL) {
-      console.log('[Debug Send] SendGrid not configured; cannot send test email');
-      return res.json({ success: true, emailsQueued: false, message: 'SendGrid not configured on server' });
+    if (!transporter) {
+      console.log('[Debug Send] Nodemailer not configured; cannot send test email');
+      return res.json({ success: true, emailsQueued: false, message: 'Nodemailer not configured on server' });
     }
 
     // Fire-and-forget background send
     (async () => {
       try {
-        const msg = { to, from: process.env.SENDER_EMAIL, subject, html };
-        const r = await sgMail.send(msg);
-        console.log('[Debug Send] Test email sent', { to, status: r && r[0] && r[0].statusCode });
+        const msg = { to, from: process.env.EMAIL_USER, subject, html };
+        const r = await transporter.sendMail(msg);
+        console.log('[Debug Send] Test email sent', { to, messageId: r.messageId });
         // record debug send result
         try {
           pushSendResults({
             type: 'debug',
             to,
             time: new Date().toISOString(),
-            status: r && r[0] && r[0].statusCode
+            status: '200'
           });
         } catch (e) {
           console.error('Failed to store debug send result', e);
         }
       } catch (err) {
-        console.error('[Debug Send] Error sending test email:', err && err.response && err.response.body ? err.response.body : err);
+        console.error('[Debug Send] Error sending test email:', err);
         try {
           pushSendResults({
             type: 'debug',
             to,
             time: new Date().toISOString(),
-            error: err && err.response && err.response.body ? err.response.body : String(err)
+            error: String(err)
           });
         } catch (e) {
           console.error('Failed to store debug send error', e);
@@ -655,6 +661,20 @@ router.post('/:meetingId/join', auth, async (req, res) => {
       });
     }
 
+    // Prevent joining too early (more than 5 minutes before scheduledAt)
+    if (meeting.type === 'scheduled' && meeting.scheduledAt) {
+      const now = new Date();
+      const scheduledTime = new Date(meeting.scheduledAt);
+      const timeDiff = scheduledTime.getTime() - now.getTime();
+      
+      if (timeDiff > 5 * 60 * 1000) {
+        return res.status(403).json({
+          success: false,
+          message: `This meeting hasn't started yet. Please wait until 5 minutes before the scheduled time.`
+        });
+      }
+    }
+
     // Check if meeting is accessible
     const hasAccess = 
       meeting.host.toString() === userId ||
@@ -750,6 +770,20 @@ router.post('/:meetingId/livekit-token', auth, async (req, res) => {
         success: false,
         message: 'This meeting has expired'
       });
+    }
+
+    // Prevent joining too early (more than 5 minutes before scheduledAt)
+    if (meeting.type === 'scheduled' && meeting.scheduledAt) {
+      const now = new Date();
+      const scheduledTime = new Date(meeting.scheduledAt);
+      const timeDiff = scheduledTime.getTime() - now.getTime();
+      
+      if (timeDiff > 5 * 60 * 1000) {
+        return res.status(403).json({
+          success: false,
+          message: `This meeting hasn't started yet. Please wait until 5 minutes before the scheduled time.`
+        });
+      }
     }
 
     const hasAccess =
@@ -1014,9 +1048,15 @@ router.delete('/:meetingId', auth, async (req, res) => {
       });
     }
 
-    // Remove the meeting immediately so it disappears from history right away.
-    // If you want to preserve an audit trail later, move this to a soft-delete flag.
-    await Meeting.deleteOne({ _id: meeting._id });
+    // Update status instead of hard-delete so it stays in history
+    if (meeting.status === 'scheduled') {
+      meeting.status = 'cancelled';
+      await meeting.save();
+    } else if (meeting.status === 'active') {
+      await meeting.endMeeting();
+    } else {
+      await Meeting.deleteOne({ _id: meeting._id });
+    }
 
     res.json({
       success: true,

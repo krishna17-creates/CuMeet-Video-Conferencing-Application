@@ -230,20 +230,29 @@ const Dashboard = () => {
   useEffect(() => {
     if (meetings.length > 0) {
       meetings.forEach(meeting => {
-        // Ensure scheduledAt exists before parsing
         const scheduledTime = meeting.scheduledAt ? parseISO(meeting.scheduledAt) : null;
-        if (
-          meeting.status === 'scheduled' &&
-          scheduledTime &&
-          now.getTime() >= scheduledTime.getTime() - 5 * 60 * 1000 &&
-          now.getTime() < scheduledTime.getTime()
-        ) {
-          addNotification({
-            id: meeting.id,
-            title: meeting.title,
-            scheduledAt: meeting.scheduledAt,
-            meetingId: meeting.meetingId
-          });
+        if (meeting.status === 'scheduled' && scheduledTime) {
+          const timeDiff = scheduledTime.getTime() - now.getTime();
+          
+          // 1 hour notification (between 60 mins and 0 mins)
+          if (timeDiff <= 60 * 60 * 1000 && timeDiff > 0) {
+            addNotification({
+              id: `${meeting.id || meeting._id}-1h`,
+              title: `${meeting.title} (Starts in < 1 hour)`,
+              scheduledAt: meeting.scheduledAt,
+              meetingId: meeting.meetingId
+            });
+          }
+
+          // 5 minutes notification (between 5 mins and 0 mins)
+          if (timeDiff <= 5 * 60 * 1000 && timeDiff > 0) {
+            addNotification({
+              id: `${meeting.id || meeting._id}-5m`,
+              title: `${meeting.title} (Starts in < 5 mins)`,
+              scheduledAt: meeting.scheduledAt,
+              meetingId: meeting.meetingId
+            });
+          }
         }
       });
     }
